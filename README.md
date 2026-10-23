@@ -11,7 +11,7 @@ truth for the contract. It also adds the developer-facing pieces:
 - `targets/` and `linker/`: the n32 target and the flat image layout at `0x8840_0000`.
 - `tools/irix7-module.py`: builds, flattens, hashes and prints the load command.
 - `template/`: a copyable module crate.
-- `examples/hello` and `examples/ticker`: worked examples used by CI.
+- `examples/hello`, `examples/ticker` and `examples/block`: worked examples used by CI.
 
 The kernel loads a module over HTTPS, verifies its SHA-256, and calls its entry point. No
 kernel rebuild is needed to add a feature.
@@ -112,6 +112,18 @@ module_sdk::panic_handler!();
 BGR screen shadow, allocation, two TCP slots, PROM environment lookup and reset/poweroff.
 See [`module-sdk/src/lib.rs`](module-sdk/src/lib.rs).
 
+ABI 10 adds `Context::block_read(target, lba, &mut sector)` for one 512-byte SCSI sector.
+[`examples/block`](examples/block) reads block 0 of target 1 and prints the volume-header
+magic; it is the reference for the block service:
+
+```rust
+let mut sector = [0u8; 512];
+if context.block_read(1, 0, &mut sector) {
+    let magic = u32::from_be_bytes([sector[0], sector[1], sector[2], sector[3]]);
+    // print "block: magic 0x...."
+}
+```
+
 For a periodic module, return a vtable with `tick: Some(tick)`. The kernel calls it at most
 every 10 ms; return `0` to keep running and non-zero to unregister. The callback receives
 the same `*const Services` pointer, so `Context::new` reconstructs the context.
@@ -127,6 +139,8 @@ sandbox. Keep the image under 2 MiB and do not assume relocations: it is linked 
 | `abi/` | `module-abi`: the versioned service table and vtable |
 | `module-sdk/` | `irix7-module-sdk`: `Context`, `entry!`, `panic_handler!` |
 | `examples/hello/` | Example module (CI) |
+| `examples/ticker/` | Periodic callback example (CI) |
+| `examples/block/` | Block-service example with its own linker script (CI) |
 | `template/` | Copyable starting crate |
 | `tools/irix7-module.py` | Build, flatten and hash a module |
 | `targets/` | `mips3-sgi-irix7-n32` target JSON |

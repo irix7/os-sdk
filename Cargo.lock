@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "block-sdk"
+version = "0.3.0"
+dependencies = [
+ "irix7-module-sdk",
+]
+
+[[package]]
 name = "hello-sdk"
 version = "0.3.0"
 dependencies = [
