@@ -1,6 +1,6 @@
 [package]
 name = "irix7-module-sdk"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Developer SDK for IRIX 7 loadable modules"

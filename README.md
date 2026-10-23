@@ -86,7 +86,7 @@ python3 tools/irix7-module.py \
 
 Or copy `template/` by hand and rename the package and binary.
 
-The template's `module-sdk` dependency is pinned to the `v0.1.0` tag.
+The template's `module-sdk` dependency is pinned to the `v0.1.1` tag.
 
 ## Writing a module
 
