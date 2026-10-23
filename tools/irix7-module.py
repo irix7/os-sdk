@@ -24,7 +24,7 @@ import sys
 
 
 def run(cmd, cwd, env=None):
-    print("+ " + " ".join(str(part) for part in cmd))
+    print("+ " + " ".join(str(part) for part in cmd), file=sys.stderr)
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
@@ -76,6 +76,9 @@ def main():
         help="flat-image linker script",
     )
     parser.add_argument("--debug", action="store_true", help="build the debug profile")
+    parser.add_argument(
+        "--json", action="store_true", help="print {module,size,sha256} on stdout"
+    )
     args = parser.parse_args()
 
     manifest = pathlib.Path(args.manifest_path).resolve()
@@ -151,11 +154,14 @@ def main():
 
     image = output.read_bytes()
     digest = hashlib.sha256(image).hexdigest()
-    print()
-    print(f"module: {output}")
-    print(f"size:   {len(image)} bytes")
-    print(f"sha256: {digest}")
-    print(f"load:   module http://<host>:<port>/{output.name} {digest}")
+    if args.json:
+        print(json.dumps({"module": str(output), "size": len(image), "sha256": digest}))
+    else:
+        print()
+        print(f"module: {output}")
+        print(f"size:   {len(image)} bytes")
+        print(f"sha256: {digest}")
+        print(f"load:   module http://<host>:<port>/{output.name} {digest}")
     return 0
 
 
