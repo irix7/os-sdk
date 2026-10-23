@@ -30,6 +30,10 @@ every module link the same crate, and compile-time assertions pin the n32 offset
 | 0x48 | `screen_read` (BGR shadow) |
 | 0x4c | `block_read` (512-byte SCSI sector) |
 
+[`examples/block`](../examples/block) is the reference for `block_read`: it reads sector 0
+of target 1 and prints the volume-header magic. It checks the table version before the
+first call and reports an older table with a bounded `block: ABI 10 required` message.
+
 The full kernel-side contract, including the vtable, tick callback, TCP slot semantics,
 flat-image layout and cache maintenance, is in the OS
 [module specification](https://github.com/irix7/os/blob/main/docs/spec/modules.md).

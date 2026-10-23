@@ -32,6 +32,31 @@ module: returned 0
 The kernel's `module` command defaults to HTTPS. An explicit `http://` is accepted for the
 local rig; use HTTPS for anything else.
 
+## Read a block
+
+`examples/block` uses the ABI 10 `block_read` service. It reads block 0 of SCSI target 1
+and prints the volume-header magic. The example carries its own copy of the flat linker
+script:
+
+```bash
+python3 tools/irix7-module.py \
+  --manifest-path examples/block/Cargo.toml \
+  --package block-sdk \
+  --linker examples/block/linker.ld \
+  --output block-sdk.module
+```
+
+The module prints the big-endian magic from the first four bytes; on an SGI volume header
+that is:
+
+```text
+block: magic 0x4d436f6d
+```
+
+`block_read` returns 0 or -1. The module returns status 1 and prints `block: read failed`
+when the sector cannot be read; on a service table older than ABI 10 it prints
+`block: ABI 10 required` and returns status 1.
+
 ## Autoload after a reset
 
 The DS1386 environment at register offset `0x10` holds NUL-separated `name=value`
