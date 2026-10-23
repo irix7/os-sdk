@@ -2,9 +2,9 @@
 
 Build loadable modules for [IRIX 7](https://github.com/irix7/os) on the SGI Indy.
 
-The SDK is separate from the operating system. It pins the `module-abi` crate from
-[`irix7/os`](https://github.com/irix7/os) at a known revision (ABI version 9) and adds the
-developer-facing pieces:
+The SDK is separate from the operating system. It owns the `module-abi` crate
+(ABI version 9) and the OS consumes it at a pinned tag, so there is a single source of
+truth for the contract. It also adds the developer-facing pieces:
 
 - `module-sdk`: a `Context` over the kernel service table, plus `entry!` and
   `panic_handler!` macros.
@@ -86,7 +86,7 @@ python3 tools/irix7-module.py \
 
 Or copy `template/` by hand and rename the package and binary.
 
-The template's `module-sdk` dependency is pinned to the `v0.1.1` tag.
+The template's `module-sdk` dependency is pinned to the `v0.2.0` tag.
 
 ## Writing a module
 
@@ -123,6 +123,7 @@ sandbox. Keep the image under 2 MiB and do not assume relocations: it is linked 
 
 | Path | Purpose |
 |---|---|
+| `abi/` | `module-abi`: the versioned service table and vtable |
 | `module-sdk/` | `irix7-module-sdk`: `Context`, `entry!`, `panic_handler!` |
 | `examples/hello/` | Example module (CI) |
 | `template/` | Copyable starting crate |

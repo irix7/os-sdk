@@ -16,7 +16,7 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy (SDK library)
-        run: cargo clippy -p irix7-module-sdk --all-targets -- -D warnings
+        run: cargo clippy -p module-abi -p irix7-module-sdk --all-targets -- -D warnings
       - name: Build the hello module
         run: python3 tools/irix7-module.py --package hello-sdk --output /tmp/hello-sdk.module --json > /tmp/hello-sdk.json
       - name: Check the JSON result
