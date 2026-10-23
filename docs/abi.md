@@ -1,7 +1,7 @@
 # Module ABI
 
-The SDK pins the `module-abi` crate from the IRIX 7 OS repository at the revision in
-`module-sdk/Cargo.toml`. The current ABI version is **9**.
+The SDK owns the `module-abi` crate in `abi/`; the IRIX 7 OS consumes it at the pinned SDK
+tag. The current ABI version is **9**.
 
 The service table is `#[repr(C)]`, append-only and passed to `_start`. New services are
 added at the end and `ABI_VERSION` is bumped; existing offsets never move. The kernel and

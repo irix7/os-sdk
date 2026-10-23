@@ -1,6 +1,6 @@
 [package]
 name = "irix7-module-sdk"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "Developer SDK for IRIX 7 loadable modules"
@@ -10,4 +10,4 @@ name = "module_sdk"
 path = "src/lib.rs"
 
 [dependencies]
-module-abi = { git = "https://github.com/irix7/os", rev = "015184e90cc305047266fecf28a86edd180cdafd", package = "module-abi" }
+module-abi = { path = "../abi" }
