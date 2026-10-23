@@ -51,6 +51,7 @@ boot menu. A missing or wrong digest prints `autoload: ...` and runs nothing.
 ```bash
 cargo install cargo-generate
 cargo generate --git https://github.com/irix7/os-sdk --subfolder template --name my-module
+# rename the template package if your project differs
 python3 tools/irix7-module.py \
   --manifest-path my-module/Cargo.toml \
   --package my-module \
