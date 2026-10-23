@@ -74,18 +74,13 @@ impl Context {
         }
     }
 
-    /// Copy BGR shadow pixels from `offset`.
     /// Read one 512-byte SCSI sector from `target` at `lba`.
-    pub fn block_read(&self, target: u8, lba: u32, out: &mut [u8; 512]) -> Result<(), ()> {
+    pub fn block_read(&self, target: u8, lba: u32, out: &mut [u8; 512]) -> bool {
         // SAFETY: the kernel writes exactly 512 bytes into the module buffer.
-        let result = unsafe { (self.services.block_read)(target, lba, out.as_mut_ptr()) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(())
-        }
+        unsafe { (self.services.block_read)(target, lba, out.as_mut_ptr()) == 0 }
     }
 
+    /// Copy BGR shadow pixels from `offset`.
     pub fn screen_read<'a>(&self, offset: u32, out: &'a mut [u8]) -> &'a [u8] {
         let n = unsafe { (self.services.screen_read)(offset, out.as_mut_ptr(), out.len()) };
         if n > 0 {
