@@ -3,7 +3,7 @@
 Build loadable modules for [IRIX 7](https://github.com/irix7/os) on the SGI Indy.
 
 The SDK is separate from the operating system. It owns the `module-abi` crate
-(ABI version 9) and the OS consumes it at a pinned tag, so there is a single source of
+(ABI version 10) and the OS consumes it at a pinned tag, so there is a single source of
 truth for the contract. It also adds the developer-facing pieces:
 
 - `module-sdk`: a `Context` over the kernel service table, plus `entry!` and
@@ -87,7 +87,7 @@ python3 tools/irix7-module.py \
 
 Or copy `template/` by hand and rename the package and binary.
 
-The template's `module-sdk` dependency is pinned to the `v0.2.1` tag.
+The template's `module-sdk` dependency is pinned to the `v0.3.0` tag.
 
 ## Writing a module
 

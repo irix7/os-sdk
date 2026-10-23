@@ -1,7 +1,7 @@
 # Module ABI
 
 The SDK owns the `module-abi` crate in `abi/`; the IRIX 7 OS consumes it at the pinned SDK
-tag. The current ABI version is **9**.
+tag. The current ABI version is **10**.
 
 The service table is `#[repr(C)]`, append-only and passed to `_start`. New services are
 added at the end and `ABI_VERSION` is bumped; existing offsets never move. The kernel and
@@ -28,6 +28,7 @@ every module link the same crate, and compile-time assertions pin the n32 offset
 | 0x40 | `config_get` |
 | 0x44 | `info` (status/net/mem/time) |
 | 0x48 | `screen_read` (BGR shadow) |
+| 0x4c | `block_read` (512-byte SCSI sector) |
 
 The full kernel-side contract, including the vtable, tick callback, TCP slot semantics,
 flat-image layout and cache maintenance, is in the OS
