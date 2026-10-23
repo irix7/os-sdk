@@ -15,7 +15,7 @@ pub const MODULE_BASE: usize = 0x8840_0000;
 pub const MODULE_MAX: usize = 0x0020_0000; // 2 MiB
 
 /// Service-table version understood by this ABI.
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 10;
 
 /// Service table passed to a module entry point.
 #[repr(C)]
@@ -57,6 +57,9 @@ pub struct Services {
     pub info: unsafe extern "C" fn(u32, *mut u8, usize) -> isize,
     /// Copy BGR shadow pixels from `offset`; returns bytes copied.
     pub screen_read: unsafe extern "C" fn(u32, *mut u8, usize) -> isize,
+    /// Read one 512-byte SCSI sector from `target` at `lba` into `buffer`.
+    /// Returns 0 on success, -1 on failure.
+    pub block_read: unsafe extern "C" fn(u8, u32, *mut u8) -> i32,
 }
 
 /// What a module returns from its entry point.
@@ -75,7 +78,7 @@ pub struct ModuleVtable {
 #[cfg(target_pointer_width = "32")]
 const _: () = {
     use core::mem::{offset_of, size_of};
-    assert!(size_of::<Services>() == 0x4c);
+    assert!(size_of::<Services>() == 0x50);
     assert!(offset_of!(Services, version) == 0x00);
     assert!(offset_of!(Services, write) == 0x04);
     assert!(offset_of!(Services, clock_ms) == 0x08);
@@ -95,6 +98,7 @@ const _: () = {
     assert!(offset_of!(Services, config_get) == 0x40);
     assert!(offset_of!(Services, info) == 0x44);
     assert!(offset_of!(Services, screen_read) == 0x48);
+    assert!(offset_of!(Services, block_read) == 0x4c);
     assert!(size_of::<ModuleVtable>() == 8);
     assert!(offset_of!(ModuleVtable, status) == 0);
     assert!(offset_of!(ModuleVtable, tick) == 4);

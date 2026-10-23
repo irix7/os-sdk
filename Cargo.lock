@@ -4,14 +4,14 @@ version = 4
 
 [[package]]
 name = "hello-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "irix7-module-sdk",
 ]
 
 [[package]]
 name = "irix7-module-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "module-abi",
 ]
@@ -22,7 +22,7 @@ version = "0.1.0"
 
 [[package]]
 name = "ticker-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "irix7-module-sdk",
 ]
