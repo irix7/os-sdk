@@ -77,6 +77,7 @@ With `cargo-generate`:
 ```bash
 cargo install cargo-generate
 cargo generate --git https://github.com/irix7/os-sdk --subfolder template --name my-module
+# the template package is named my-module; rename it if your project differs
 python3 tools/irix7-module.py \
   --manifest-path my-module/Cargo.toml \
   --package my-module \
@@ -86,7 +87,7 @@ python3 tools/irix7-module.py \
 
 Or copy `template/` by hand and rename the package and binary.
 
-The template's `module-sdk` dependency is pinned to the `v0.2.0` tag.
+The template's `module-sdk` dependency is pinned to the `v0.2.1` tag.
 
 ## Writing a module
 
