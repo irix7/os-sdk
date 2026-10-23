@@ -18,7 +18,16 @@ jobs:
       - name: Clippy (SDK library)
         run: cargo clippy -p irix7-module-sdk --all-targets -- -D warnings
       - name: Build the hello module
-        run: python3 tools/irix7-module.py --package hello-sdk --output /tmp/hello-sdk.module
+        run: python3 tools/irix7-module.py --package hello-sdk --output /tmp/hello-sdk.module --json > /tmp/hello-sdk.json
+      - name: Check the JSON result
+        run: |
+          python3 - <<'PY'
+          import json
+          data = json.load(open('/tmp/hello-sdk.json'))
+          assert data['size'] > 0
+          assert len(data['sha256']) == 64
+          print('json ok:', data['size'], 'bytes')
+          PY
       - name: Build the ticker module
         run: python3 tools/irix7-module.py --package ticker-sdk --output /tmp/ticker-sdk.module
       - name: Inspect the image

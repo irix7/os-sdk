@@ -36,7 +36,8 @@ cd os-sdk
 python3 tools/irix7-module.py --package hello-sdk
 ```
 
-The last lines are the flat image, its size, its SHA-256, and a copy-paste load command:
+Add `--json` for machine-readable output. The last lines are the flat image, its size,
+its SHA-256, and a copy-paste load command:
 
 ```text
 module: /home/you/os-sdk/hello-sdk.module
@@ -71,15 +72,19 @@ The environment lives at DS1386 register offset `0x10`; see the OS
 
 ## Template
 
+With `cargo-generate`:
+
 ```bash
-cp -r template my-module
-# edit my-module/Cargo.toml (package name) and my-module/src/main.rs
+cargo install cargo-generate
+cargo generate --git https://github.com/irix7/os-sdk --subfolder template --name my-module
 python3 tools/irix7-module.py \
   --manifest-path my-module/Cargo.toml \
   --package my-module \
   --linker my-module/linker.ld \
   --output my-module.module
 ```
+
+Or copy `template/` by hand and rename the package and binary.
 
 The template's `module-sdk` dependency is pinned to the `v0.1.0` tag.
 
