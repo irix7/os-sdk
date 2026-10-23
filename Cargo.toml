@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["module-sdk", "examples/hello"]
+exclude = ["template"]
+default-members = ["module-sdk"]
+
+[profile.dev]
+panic = "abort"
+opt-level = 0
+
+[profile.release]
+panic = "abort"
+opt-level = 2

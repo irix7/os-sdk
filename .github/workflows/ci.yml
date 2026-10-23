@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-10-03
+          components: rust-src, rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (SDK library)
+        run: cargo clippy -p irix7-module-sdk --all-targets -- -D warnings
+      - name: Build the example module
+        run: python3 tools/irix7-module.py --package hello-sdk --output /tmp/hello-sdk.module
+      - name: Inspect the image
+        run: |
+          ls -l /tmp/hello-sdk.module
+          sha256sum /tmp/hello-sdk.module
+          python3 - <<'PY'
+          from pathlib import Path
+          data = Path('/tmp/hello-sdk.module').read_bytes()
+          assert 0 < len(data) <= 2 * 1024 * 1024, 'module image size out of range'
+          print('flat image ok:', len(data), 'bytes')
+          PY
