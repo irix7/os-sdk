@@ -81,8 +81,7 @@ python3 tools/irix7-module.py \
   --output my-module.module
 ```
 
-The template's `module-sdk` dependency points at the SDK's `main` branch. Pin a tag or
-revision in production.
+The template's `module-sdk` dependency is pinned to the `v0.1.0` tag.
 
 ## Writing a module
 
