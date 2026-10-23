@@ -1,6 +1,6 @@
 [package]
 name = "{{project-name}}"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "An IRIX 7 loadable module"
@@ -10,4 +10,4 @@ name = "{{project-name}}"
 path = "src/main.rs"
 
 [dependencies]
-module-sdk = { package = "irix7-module-sdk", git = "https://github.com/irix7/os-sdk", tag = "v0.1.0" }
+module-sdk = { package = "irix7-module-sdk", git = "https://github.com/irix7/os-sdk", tag = "v0.1.1" }
