@@ -11,7 +11,7 @@ developer-facing pieces:
 - `targets/` and `linker/`: the n32 target and the flat image layout at `0x8840_0000`.
 - `tools/irix7-module.py`: builds, flattens, hashes and prints the load command.
 - `template/`: a copyable module crate.
-- `examples/hello`: a worked example used by CI.
+- `examples/hello` and `examples/ticker`: worked examples used by CI.
 
 The kernel loads a module over HTTPS, verifies its SHA-256, and calls its entry point. No
 kernel rebuild is needed to add a feature.

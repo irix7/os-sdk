@@ -17,8 +17,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy (SDK library)
         run: cargo clippy -p irix7-module-sdk --all-targets -- -D warnings
-      - name: Build the example module
+      - name: Build the hello module
         run: python3 tools/irix7-module.py --package hello-sdk --output /tmp/hello-sdk.module
+      - name: Build the ticker module
+        run: python3 tools/irix7-module.py --package ticker-sdk --output /tmp/ticker-sdk.module
       - name: Inspect the image
         run: |
           ls -l /tmp/hello-sdk.module

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["module-sdk", "examples/hello"]
+members = ["module-sdk", "examples/hello", "examples/ticker"]
 exclude = ["template"]
 default-members = ["module-sdk"]
 
