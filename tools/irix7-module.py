@@ -47,7 +47,7 @@ def find_objcopy():
     if found:
         return found
     raise SystemExit(
-        "llvm-objcopy not found; install the rust-src component or put llvm-objcopy on PATH"
+        "llvm-objcopy not found; install the llvm-tools component or put llvm-objcopy on PATH"
     )
 
 

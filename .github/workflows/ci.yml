@@ -12,7 +12,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-10-03
-          components: rust-src, rustfmt, clippy
+          components: rust-src, rustfmt, clippy, llvm-tools
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy (SDK library)

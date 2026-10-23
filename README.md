@@ -21,11 +21,11 @@ kernel rebuild is needed to add a feature.
 - Rust nightly, pinned by `rust-toolchain.toml` (`nightly-2026-10-03`) with `rust-src`,
   `rustfmt` and `clippy`.
 - Python 3.
-- `llvm-objcopy` from the Rust toolchain (the script finds it automatically).
+- `llvm-objcopy` from the Rust `llvm-tools` component (the script finds it automatically).
 
 ```bash
 rustup show          # installs the pinned toolchain if needed
-rustup component add rust-src
+rustup component add rust-src llvm-tools
 ```
 
 ## Quickstart
