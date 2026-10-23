@@ -1,0 +1,13 @@
+[package]
+name = "ticker-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Periodic IRIX 7 module built with the SDK"
+
+[[bin]]
+name = "ticker-sdk"
+path = "src/main.rs"
+
+[dependencies]
+module-sdk = { package = "irix7-module-sdk", path = "../../module-sdk" }
