@@ -3,6 +3,10 @@
 The SDK owns the `module-abi` crate in `abi/`; the IRIX 7 OS consumes it at the pinned SDK
 tag. The current ABI version is **10**.
 
+This document covers **kernel modules only**.  Static user images use the
+separate provisional userland ABI in [`user-abi.md`](user-abi.md); the two are
+not interchangeable.
+
 The service table is `#[repr(C)]`, append-only and passed to `_start`. New services are
 added at the end and `ABI_VERSION` is bumped; existing offsets never move. The kernel and
 every module link the same crate, and compile-time assertions pin the n32 offsets.

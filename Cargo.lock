@@ -24,6 +24,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "irix7-user-abi"
+version = "0.1.0"
+
+[[package]]
+name = "irix7-user-sdk"
+version = "0.1.0"
+dependencies = [
+ "irix7-user-abi",
+]
+
+[[package]]
 name = "module-abi"
 version = "0.1.0"
 

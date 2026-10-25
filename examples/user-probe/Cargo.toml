@@ -1,0 +1,22 @@
+[package]
+name = "user-probe-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Filesystem and clock probe for the IRIX 7 user SDK"
+
+[[bin]]
+name = "user-probe"
+path = "src/main.rs"
+
+[dependencies]
+user-sdk = { package = "irix7-user-sdk", path = "../../user-sdk" }
+
+[profile.release]
+panic = "abort"
+# Keep the examples at -O1 until the SDK runtime has been run on hardware; the
+# OS smoke image records an n32 -Oz regression in the write/exit flow.
+opt-level = 1
+lto = false
+
+[workspace]

@@ -1,3 +1,10 @@
 /target
 /template/target
+/examples/user-hello/target
+/examples/user-probe/target
+/templates/user/target
+__pycache__/
+*.py[cod]
 *.module
+*.elf
+*.raw

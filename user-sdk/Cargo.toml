@@ -1,0 +1,13 @@
+[package]
+name = "irix7-user-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Static native n32 userland runtime for IRIX 7"
+
+[lib]
+name = "user_sdk"
+path = "src/lib.rs"
+
+[dependencies]
+irix7-user-abi = { path = "../user-abi" }

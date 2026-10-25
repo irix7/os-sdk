@@ -1,8 +1,21 @@
 [workspace]
 resolver = "2"
-members = ["abi", "module-sdk", "examples/hello", "examples/ticker", "examples/block"]
-exclude = ["template"]
-default-members = ["module-sdk"]
+members = [
+    "abi",
+    "module-sdk",
+    "user-abi",
+    "user-sdk",
+    "examples/hello",
+    "examples/ticker",
+    "examples/block",
+]
+exclude = [
+    "template",
+    "templates/user",
+    "examples/user-hello",
+    "examples/user-probe",
+]
+default-members = ["module-sdk", "user-sdk"]
 
 [profile.dev]
 panic = "abort"

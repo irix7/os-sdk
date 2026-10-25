@@ -1,34 +1,51 @@
-# IRIX 7 Module SDK
+# IRIX 7 SDK
 
-Build loadable modules for [IRIX 7](https://github.com/irix7/os) on the SGI Indy.
+Build software for [IRIX 7](https://github.com/irix7/os) on the SGI Indy.  The SDK has
+two distinct targets:
 
-The SDK is separate from the operating system. It owns the `module-abi` crate
-(ABI version 10) and the OS consumes it at a pinned tag, so there is a single source of
-truth for the contract. It also adds the developer-facing pieces:
+| Target | Output | Load address | Runs as |
+|---|---|---|---|
+| **Kernel module** | flat binary, SHA-256 checked | `0x8840_0000` | kernel mode in the kernel address space |
+| **User program** | static n32 ELF + 256 KiB raw SCSI image | `0x1000_0000` | user mode, loaded from SCSI target 2 |
+
+They are not interchangeable.  A module is not a process, and a user program cannot
+call the module service table.
+
+The SDK is separate from the operating system.  It owns the `module-abi` crate
+(ABI version 10), the userland ABI and target, the linkers, the build tools and the
+templates.  The OS consumes the module ABI at a pinned tag so there is a single
+source of truth for the contract.
+
+## What is in the SDK
 
 - `module-sdk`: a `Context` over the kernel service table, plus `entry!` and
   `panic_handler!` macros.
-- `targets/` and `linker/`: the n32 target and the flat image layout at `0x8840_0000`.
-- `tools/irix7-module.py`: builds, flattens, hashes and prints the load command.
-- `template/`: a copyable module crate.
-- `examples/hello`, `examples/ticker` and `examples/block`: worked examples used by CI.
-
-The kernel loads a module over HTTPS, verifies its SHA-256, and calls its entry point. No
-kernel rebuild is needed to add a feature.
+- `user-abi`: the provisional native n32 userland syscall numbers, flags and C layouts.
+- `user-sdk`: the static user runtime: `_start`, arguments/environment, console,
+  descriptors, directories and clocks.
+- `targets/` and `linker/`: the kernel/module target and flat linker, plus the
+  distinct native user target and user linker.
+- `tools/irix7-module.py`: builds, flattens, hashes and prints the module load command.
+- `tools/irix7-user.py`: builds a user image, validates the n32 ELF and packs the
+  256 KiB target-2 image.
+- `template/` and `templates/user/`: copyable module and user crates.
+- `examples/hello`, `examples/ticker`, `examples/block`: module examples used by CI.
+- `examples/user-hello`, `examples/user-probe`: static user examples used by CI.
 
 ## Requirements
 
 - Rust nightly, pinned by `rust-toolchain.toml` (`nightly-2026-10-03`) with `rust-src`,
   `rustfmt` and `clippy`.
 - Python 3.
-- `llvm-objcopy` from the Rust `llvm-tools` component (the script finds it automatically).
+- For modules, `llvm-objcopy` from the Rust `llvm-tools` component (the script finds it
+  automatically).
 
 ```bash
 rustup show          # installs the pinned toolchain if needed
 rustup component add rust-src llvm-tools
 ```
 
-## Quickstart
+## Module quickstart
 
 ```bash
 git clone https://github.com/irix7/os-sdk
@@ -70,9 +87,38 @@ mcp.token=<optional bearer token for MCP>
 The environment lives at DS1386 register offset `0x10`; see the OS
 [module specification](https://github.com/irix7/os/blob/main/docs/spec/modules.md).
 
-## Template
+## Userland quickstart
 
-With `cargo-generate`:
+```bash
+python3 tools/irix7-user.py --package user-hello-sdk
+```
+
+The tool builds with the SDK's native n32 target and user linker, then validates the
+result before writing it:
+
+```text
+elf:    /home/you/os-sdk/user-hello.elf
+image:  /home/you/os-sdk/user-hello.raw
+size:   12345 bytes (ELF)
+image:  262144 bytes (raw SCSI target 2)
+entry:  0x10000000
+sha256: <64 hex digits>
+```
+
+Attach `user-hello.raw` as SCSI target 2.  The kernel reads LBA 0 and enters the image
+after boot; the telnet `userelf` command reloads the same image.  `--json` prints
+`elf`, `image`, `elf_size`, `image_size`, `sha256`, `entry` and the allocated section
+names.
+
+This is a **static native bring-up runtime**, not POSIX.  There is no process table,
+`fork`/`exec`, signals, TLS, `termios`, sockets or general filesystem.  The production
+POSIX C layer is the separate [relibc fork](https://github.com/irix7/relibc); it is not
+part of this SDK.  See [`docs/userland.md`](docs/userland.md) for the boundary and
+[`docs/user-abi.md`](docs/user-abi.md) for the provisional syscall table.
+
+## Templates
+
+Modules, with `cargo-generate`:
 
 ```bash
 cargo install cargo-generate
@@ -85,9 +131,20 @@ python3 tools/irix7-module.py \
   --output my-module.module
 ```
 
-Or copy `template/` by hand and rename the package and binary.
+User programs:
 
-The template's `module-sdk` dependency is pinned to the `v0.3.0` tag.
+```bash
+cargo generate --git https://github.com/irix7/os-sdk --subfolder templates/user --name my-user-program
+python3 tools/irix7-user.py \
+  --manifest-path my-user-program/Cargo.toml \
+  --package my-user-program \
+  --linker my-user-program/linker.ld \
+  --output my-user-program/my-user-program.elf
+```
+
+Or copy the template directory by hand and rename the package and binary.  The module
+template's `module-sdk` dependency is pinned to `v0.3.0`; the user template is pinned to
+`v0.4.0`, the first release with `irix7-user-sdk`.
 
 ## Writing a module
 
@@ -132,20 +189,56 @@ Modules run in **kernel mode**. The SHA-256 digest is the trust boundary; there 
 sandbox. Keep the image under 2 MiB and do not assume relocations: it is linked at
 `0x88400000`.
 
+## Writing a user program
+
+```rust
+#![no_std]
+#![no_main]
+
+use user_sdk::{entry, panic_handler, println, Context};
+
+fn run(context: &Context) -> i32 {
+    println!("hello from my user program");
+    println!("argc={}", context.argc());
+    0
+}
+
+entry!(run);
+panic_handler!();
+```
+
+`Context` exposes `args()`, `env_vars()`, `env(name)`, `write`, `println` and `exit`.
+`user_sdk::fs` adds `File`, `Dir`, `stat`, `getcwd` and `chdir`; `user_sdk::time` adds
+`clock`, `monotonic`, `realtime` and `sleep`.  The return value of `run` is the exit
+status.  The runtime is `no_std`; there is no allocator, so programs use fixed buffers.
+
+The user target remains distinct from the kernel/module target.  The user ELF is
+`ELF32`, big-endian, n32 (`e_flags` ABI2), MIPS III, static and linked at
+`0x1000_0000`.  `tools/irix7-user.py` rejects a wrong class, endianness, ABI, machine,
+PIC flag, dynamic segment, interpreter, TLS segment, undefined symbol, entry outside
+`.text`, section outside `PT_LOAD` or an ELF larger than 256 KiB.
+
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
-| `abi/` | `module-abi`: the versioned service table and vtable |
-| `module-sdk/` | `irix7-module-sdk`: `Context`, `entry!`, `panic_handler!` |
+| `abi/` | `module-abi`: the versioned module service table and vtable |
+| `module-sdk/` | `irix7-module-sdk`: module `Context`, `entry!`, `panic_handler!` |
+| `user-abi/` | `irix7-user-abi`: provisional user syscalls, flags and layouts |
+| `user-sdk/` | `irix7-user-sdk`: static user `_start`, context, console, fs, clocks |
 | `examples/hello/` | Example module (CI) |
 | `examples/ticker/` | Periodic callback example (CI) |
 | `examples/block/` | Block-service example with its own linker script (CI) |
-| `template/` | Copyable starting crate |
+| `examples/user-hello/` | Console/args/environment/BSS user example (CI) |
+| `examples/user-probe/` | Filesystem and clock user probe (CI) |
+| `template/` | Copyable module crate |
+| `templates/user/` | Copyable user crate |
 | `tools/irix7-module.py` | Build, flatten and hash a module |
-| `targets/` | `mips3-sgi-irix7-n32` target JSON |
-| `linker/` | Flat module linker script |
-| `docs/` | Quickstart and ABI notes |
+| `tools/irix7-user.py` | Build, validate and pack a user image |
+| `tools/check-os-sync.py` | Compare the SDK target/ABI with an OS checkout |
+| `targets/` | `mips3-sgi-irix7-n32` and `mips3-sgi-irix7-native-n32` JSON |
+| `linker/` | Flat module linker and static user linker |
+| `docs/` | Module ABI, user ABI, userland boundary and quickstarts |
 
 ## Licence
 

@@ -1,0 +1,22 @@
+[package]
+name = "my-user-program"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "A static native n32 user program for IRIX 7"
+
+[[bin]]
+name = "my-user-program"
+path = "src/main.rs"
+
+[dependencies]
+# v0.4.0 is the first SDK release that contains irix7-user-sdk.  When copying
+# this template into another repository, keep a tag rather than a branch.
+user-sdk = { package = "irix7-user-sdk", git = "https://github.com/irix7/os-sdk", tag = "v0.4.0" }
+
+[profile.release]
+panic = "abort"
+opt-level = 1
+lto = false
+
+[workspace]

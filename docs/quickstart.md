@@ -1,6 +1,6 @@
 # Quickstart
 
-## Build the example
+## Build a module
 
 ```bash
 git clone https://github.com/irix7/os-sdk
@@ -11,7 +11,18 @@ python3 tools/irix7-module.py --package hello-sdk
 The tool runs `cargo build` for the n32 target, flattens the ELF to
 `hello-sdk.module`, and prints the size, SHA-256 and a load command.
 
-## Load it on the guest
+## Build a user image
+
+```bash
+python3 tools/irix7-user.py --package user-hello-sdk
+```
+
+The tool builds the static native n32 user ELF, validates it, and writes
+`user-hello.elf` plus a 262144-byte `user-hello.raw` target-2 image.  Attach the
+raw image as SCSI target 2; see [`userland.md`](userland.md) for the loader
+contract and the boundary between this runtime and POSIX/relibc.
+
+## Load the module on the guest
 
 Serve the directory over the network the Indy can reach:
 
@@ -71,7 +82,7 @@ mcp.token=<optional MCP bearer token>
 After DHCP/DNS the kernel fetches the image, checks the digest and runs it before the
 boot menu. A missing or wrong digest prints `autoload: ...` and runs nothing.
 
-## Use the template
+## Use the module template
 
 ```bash
 cargo install cargo-generate
@@ -84,9 +95,24 @@ python3 tools/irix7-module.py \
   --output my-module.module
 ```
 
+## Use the user template
+
+```bash
+cargo generate --git https://github.com/irix7/os-sdk --subfolder templates/user --name my-user-program
+python3 tools/irix7-user.py \
+  --manifest-path my-user-program/Cargo.toml \
+  --package my-user-program \
+  --linker my-user-program/linker.ld \
+  --output my-user-program/my-user-program.elf
+```
+
 ## Where to go next
 
-- [`../module-sdk/src/lib.rs`](../module-sdk/src/lib.rs): the full `Context` API.
-- [`abi.md`](abi.md): the service-table version and append-only rule.
+- [`../module-sdk/src/lib.rs`](../module-sdk/src/lib.rs): the module `Context` API.
+- [`../user-sdk/src/lib.rs`](../user-sdk/src/lib.rs): the user runtime API.
+- [`abi.md`](abi.md): the module service-table version and append-only rule.
+- [`user-abi.md`](user-abi.md): the provisional user syscall table and layouts.
+- [`userland.md`](userland.md): the userland boundary, loader contract and
+  target-2 packing.
 - [IRIX 7 module specification](https://github.com/irix7/os/blob/main/docs/spec/modules.md):
   kernel-side lifecycle, cache maintenance and the boot autoload.

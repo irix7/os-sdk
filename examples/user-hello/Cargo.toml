@@ -1,0 +1,22 @@
+[package]
+name = "user-hello-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Example IRIX 7 static n32 user image built with the SDK"
+
+[[bin]]
+name = "user-hello"
+path = "src/main.rs"
+
+[dependencies]
+user-sdk = { package = "irix7-user-sdk", path = "../../user-sdk" }
+
+[profile.release]
+panic = "abort"
+# The n32 backend has a known -Oz regression in the OS smoke image; keep the
+# examples at -O1 until the SDK runtime has been run on hardware.
+opt-level = 1
+lto = false
+
+[workspace]

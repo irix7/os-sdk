@@ -1,0 +1,10 @@
+[package]
+name = "irix7-user-abi"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Provisional native n32 userland ABI for IRIX 7 static user images"
+
+[lib]
+name = "user_abi"
+path = "src/lib.rs"
