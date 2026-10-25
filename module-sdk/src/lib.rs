@@ -80,6 +80,12 @@ impl Context {
         unsafe { (self.services.block_read)(target, lba, out.as_mut_ptr()) == 0 }
     }
 
+    /// Write one 512-byte SCSI sector through the ABI version 11 service.
+    pub fn block_write(&self, target: u8, lba: u32, data: &[u8; 512]) -> bool {
+        // SAFETY: the kernel reads exactly 512 bytes from the module buffer.
+        unsafe { (self.services.block_write)(target, lba, data.as_ptr()) == 0 }
+    }
+
     /// Copy BGR shadow pixels from `offset`.
     pub fn screen_read<'a>(&self, offset: u32, out: &'a mut [u8]) -> &'a [u8] {
         let n = unsafe { (self.services.screen_read)(offset, out.as_mut_ptr(), out.len()) };
