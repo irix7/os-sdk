@@ -44,3 +44,7 @@ version = "0.3.0"
 dependencies = [
  "irix7-module-sdk",
 ]
+
+[[package]]
+name = "wasm-abi"
+version = "0.1.0"
