@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "abi",
+    "wasm-abi",
     "module-sdk",
     "user-abi",
     "user-sdk",
