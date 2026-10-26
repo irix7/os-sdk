@@ -2,21 +2,31 @@
 //! Deterministic manifest record codec.
 //!
 //! The record is a sidecar payload, not the module image itself. The image
-//! digest covers the bytes that contain it. Version 1 is little-endian:
+//! digest covers the bytes that contain it. Version 2 is little-endian:
 //!
 //! ```text
-//! I7MM | u16 format | u16 abi major | u16 abi minor
+//! I7MM | u16 format=2 | u16 abi major | u16 abi minor
+//!      | u32 entry_offset
+//!      | u16 name_len | name | u16 version_len | version
+//!      | u16 dep_count | (u16 name_len, name, u16 version_len, version, 32-byte digest)*
+//!      | u16 export_count | (u16 interface_len, interface, u16 export_version, u32 table_offset)*
+//! ```
+//!
+//! Version 1 is still decoded for legacy images:
+//!
+//! ```text
+//! I7MM | u16 format=1 | u16 abi major | u16 abi minor
 //!      | u16 name_len | name | u16 version_len | version
 //!      | u16 dep_count | (u16 name_len, name, u16 version_len, version, 32-byte digest)*
 //!      | u16 export_count | (u16 interface_len, interface, u16 export_version)*
 //! ```
 //!
+//! A version 1 record has no manager entry and no export table offsets; both
+//! decode as zero. The encoder only emits version 2.
+//!
 //! No CRC is included: the enclosing image digest is the integrity boundary.
 //! A record is limited to 64 KiB so a corrupt dependency count cannot make a
 //! reader allocate without a bound.
-//!
-//! This is a byte-for-byte port of `module_resolver::codec` in irix7/os; the
-//! cross-implementation vectors in `testdata/` pin the agreement.
 
 use alloc::string::{FromUtf8Error, String};
 use alloc::vec::Vec;
@@ -26,8 +36,10 @@ use crate::{Abi, Dependency, Export, Manifest, ModuleId};
 
 /// Manifest record magic.
 pub const MAGIC: [u8; 4] = *b"I7MM";
-/// Manifest record format version.
-pub const FORMAT_VERSION: u16 = 1;
+/// Current manifest record format version.
+pub const FORMAT_VERSION: u16 = 2;
+/// Legacy version 1 record format, accepted for decoding.
+pub const FORMAT_VERSION_V1: u16 = 1;
 /// Maximum encoded manifest record length.
 pub const MAX_RECORD: usize = 64 * 1024;
 
@@ -91,13 +103,14 @@ impl From<FromUtf8Error> for DecodeError {
 }
 
 impl Manifest {
-    /// Encode this manifest as a version 1 record.
+    /// Encode this manifest as a version 2 record.
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut out = Vec::new();
         out.extend_from_slice(&MAGIC);
         push_u16(&mut out, FORMAT_VERSION)?;
         push_u16(&mut out, self.abi.major)?;
         push_u16(&mut out, self.abi.minor)?;
+        push_u32(&mut out, self.entry_offset);
         push_string(&mut out, &self.id.name)?;
         push_string(&mut out, &self.id.version)?;
         push_u16(&mut out, checked_len(self.dependencies.len())?)?;
@@ -110,6 +123,7 @@ impl Manifest {
         for export in &self.exports {
             push_string(&mut out, &export.interface)?;
             push_u16(&mut out, export.version)?;
+            push_u32(&mut out, export.offset);
         }
         if out.len() > MAX_RECORD {
             return Err(EncodeError::TooLarge);
@@ -117,7 +131,10 @@ impl Manifest {
         Ok(out)
     }
 
-    /// Decode one complete version 1 manifest record.
+    /// Decode one complete version 2 record or a legacy version 1 record.
+    ///
+    /// A version 1 record decodes with `entry_offset == 0` and every export
+    /// offset equal to zero.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         if bytes.len() > MAX_RECORD {
             return Err(DecodeError::TooLarge);
@@ -129,28 +146,20 @@ impl Manifest {
         if reader.take(4)? != MAGIC {
             return Err(DecodeError::BadMagic);
         }
-        let version = reader.u16()?;
-        if version != FORMAT_VERSION {
-            return Err(DecodeError::UnsupportedVersion(version));
+        match reader.u16()? {
+            FORMAT_VERSION_V1 => Self::decode_v1(&mut reader),
+            FORMAT_VERSION => Self::decode_v2(&mut reader),
+            version => Err(DecodeError::UnsupportedVersion(version)),
         }
+    }
+
+    fn decode_v1(reader: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let abi = Abi::new(reader.u16()?, reader.u16()?);
         let name = reader.string()?;
         let module_version = reader.string()?;
-        let dependency_count = reader.u16()? as usize;
-        // Every dependency is at least two u16 lengths plus a 32-byte digest.
-        // Reject an impossible count before reserving a vector for it.
-        if dependency_count > reader.remaining() / 36 {
-            return Err(DecodeError::Truncated);
-        }
-        let mut dependencies = Vec::with_capacity(dependency_count);
-        for _ in 0..dependency_count {
-            let dependency_name = reader.string()?;
-            let dependency_version = reader.string()?;
-            let mut sha256 = [0u8; 32];
-            sha256.copy_from_slice(reader.take(32)?);
-            dependencies.push(Dependency::new(dependency_name, dependency_version, sha256));
-        }
+        let dependencies = decode_dependencies(reader)?;
         let export_count = reader.u16()? as usize;
+        // Every export is at least two u16 lengths.
         if export_count > reader.remaining() / 4 {
             return Err(DecodeError::Truncated);
         }
@@ -165,10 +174,59 @@ impl Manifest {
         Ok(Self {
             id: ModuleId::new(name, module_version),
             abi,
+            entry_offset: 0,
             dependencies,
             exports,
         })
     }
+
+    fn decode_v2(reader: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        let abi = Abi::new(reader.u16()?, reader.u16()?);
+        let entry_offset = reader.u32()?;
+        let name = reader.string()?;
+        let module_version = reader.string()?;
+        let dependencies = decode_dependencies(reader)?;
+        let export_count = reader.u16()? as usize;
+        // Every export is at least two u16 lengths plus a u32 offset.
+        if export_count > reader.remaining() / 8 {
+            return Err(DecodeError::Truncated);
+        }
+        let mut exports = Vec::with_capacity(export_count);
+        for _ in 0..export_count {
+            let interface = reader.string()?;
+            let version = reader.u16()?;
+            let offset = reader.u32()?;
+            exports.push(Export::at(interface, version, offset));
+        }
+        if reader.remaining() != 0 {
+            return Err(DecodeError::TrailingBytes);
+        }
+        Ok(Self {
+            id: ModuleId::new(name, module_version),
+            abi,
+            entry_offset,
+            dependencies,
+            exports,
+        })
+    }
+}
+
+fn decode_dependencies(reader: &mut Reader<'_>) -> Result<Vec<Dependency>, DecodeError> {
+    let count = reader.u16()? as usize;
+    // Every dependency is at least two u16 lengths plus a 32-byte digest.
+    // Reject an impossible count before reserving a vector for it.
+    if count > reader.remaining() / 36 {
+        return Err(DecodeError::Truncated);
+    }
+    let mut dependencies = Vec::with_capacity(count);
+    for _ in 0..count {
+        let name = reader.string()?;
+        let version = reader.string()?;
+        let mut sha256 = [0u8; 32];
+        sha256.copy_from_slice(reader.take(32)?);
+        dependencies.push(Dependency::new(name, version, sha256));
+    }
+    Ok(dependencies)
 }
 
 fn checked_len(len: usize) -> Result<u16, EncodeError> {
@@ -178,6 +236,10 @@ fn checked_len(len: usize) -> Result<u16, EncodeError> {
 fn push_u16(out: &mut Vec<u8>, value: u16) -> Result<(), EncodeError> {
     out.extend_from_slice(&value.to_le_bytes());
     Ok(())
+}
+
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
 }
 
 fn push_string(out: &mut Vec<u8>, value: &str) -> Result<(), EncodeError> {
@@ -210,6 +272,11 @@ impl<'a> Reader<'a> {
     fn u16(&mut self) -> Result<u16, DecodeError> {
         let bytes = self.take(2)?;
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn u32(&mut self) -> Result<u32, DecodeError> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     fn string(&mut self) -> Result<String, DecodeError> {

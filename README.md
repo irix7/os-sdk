@@ -12,16 +12,16 @@ They are not interchangeable.  A module is not a process, and a user program can
 call the module service table.
 
 The SDK is separate from the operating system.  It owns the `module-abi` crate
-(ABI version 10), the userland ABI and target, the linkers, the build tools and the
+(ABI version 12), the userland ABI and target, the linkers, the build tools and the
 templates.  The OS consumes the module ABI at a pinned tag so there is a single
 source of truth for the contract.
 
 ## What is in the SDK
 
-- `module-sdk`: a `Context` over the kernel service table, plus `entry!` and
-  `panic_handler!` macros.
-- `manifest`: the build-time module manifest model: the OS `I7MM` record and `I7MF`
-  footer, with the same encoder, decoder and limits as the OS resolver.
+- `module-sdk`: a `Context` over the kernel service table, plus `entry!`,
+  `entry_with_context!` and `panic_handler!` macros.
+- `manifest`: the build-time module manifest model: `I7MM` v1/v2 records and the
+  `I7MF` footer, with v1 compatibility decoding and the v2 entry/export fields.
 - `wasm-abi`: the draft `i7host` host-call ABI and guest layouts for Wasm applications.
 - `user-abi`: the provisional native n32 userland syscall numbers, flags and C layouts.
 - `user-sdk`: the static user runtime: `_start`, arguments/environment, console,
@@ -94,18 +94,20 @@ The environment lives at DS1386 register offset `0x10`; see the OS
 ## Module manifests and runtime dependencies
 
 A module may declare a manifest: its exact name and version, the service-table ABI it
-was built for, exact dependencies with SHA-256 digests, and the interfaces it exports.
-Pass `--manifest-json` (or the explicit `--name`/`--version`/`--abi-*`/`--depends`/
-`--export` flags) and the tool appends the version 1 `I7MM` record and `I7MF` footer
-after the flattened image:
+was built for, exact dependencies with SHA-256 digests, the interfaces it exports with
+their C-table offsets, and its manager entry offset. Pass `--manifest-json` (or the
+explicit `--name`/`--version`/`--abi-*`/`--entry-offset`/`--depends`/`--export` flags)
+and the tool appends the version 2 `I7MM` record and `I7MF` footer after the flattened
+image:
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "name": "mesh.transport",
   "version": "1.2.3",
   "abi_major": 1,
-  "abi_minor": 11,
+  "abi_minor": 12,
+  "entry_offset": 0,
   "depends": [
     {
       "name": "mesh.codec",
@@ -113,22 +115,50 @@ after the flattened image:
       "sha256": "<64 hex digits over the dependency image>"
     }
   ],
-  "exports": [{ "interface": "irix7.mesh.transport", "version": 1 }]
+  "exports": [
+    { "interface": "irix7.mesh.transport", "version": 1, "offset": 128 }
+  ]
 }
 ```
+
+Version 1 manifests remain decodable for older images; the encoder emits version 2. The
+new fields bind the manager entry and each export table to an image-relative offset, so a
+manager can enter a dependency and hand out a C table without relocation.
 
 ```bash
 python3 tools/irix7-module.py --package my-module --manifest-json my-module/manifest.json
 ```
 
 The printed SHA-256 then covers image, record and footer, and is the digest the
-`module` command and the `mcp.sha256` autoload key check. A module built without a
-manifest option is byte-for-byte the same flat image as before and remains a valid
-standalone module. Manifests change no service ABI: the kernel does not read the
-trailing data, and the entry point stays at offset 0. See
-[`docs/module-manifest.md`](docs/module-manifest.md) for the JSON schema, the exact
-wire format, the ABI mapping and the current limits. The OS resolver in
+`module` command, the `mcp.sha256` autoload key and the ABI 12 `module_load` request
+check. A module built without a manifest option is byte-for-byte the same flat image as
+before and remains a valid standalone module. A manifest itself does not change the
+service ABI: the kernel does not read the trailing data, and the entry at offset 0 is
+unchanged. See [`docs/module-manifest.md`](docs/module-manifest.md) for the JSON schema,
+the exact wire format, the ABI mapping and the current limits. The OS resolver in
 `crates/module-resolver` remains the runtime/host authority.
+
+## Module loader ABI (v12)
+
+ABI 12 appends the loader/arena services that a downloadable manager uses to load and
+enter dependencies: `module_arena`, `module_load`, `module_execute`, `module_find`,
+`module_find_export`, `module_query` and `module_unload` at offsets `0x54`-`0x6c`. The
+kernel owns the arena, fetch/SHA-256/copy, cache maintenance and the loaded-module table;
+resolution, manifests, signatures, package indexes and policy stay in the manager module.
+This is an explicit ROM-freeze exception. The OS kernel does not implement it yet; the
+SDK defines and host-tests the C/Rust contract in
+[`docs/module-loader.md`](docs/module-loader.md).
+
+```rust
+fn run(context: &Context, manager: *const ModuleContext) -> *const ModuleVtable {
+    // the manager pointer is opaque; the manager and this module agree on its layout
+    &VTABLE
+}
+
+module_sdk::entry_with_context!(run);
+```
+
+Legacy `entry!` modules keep the one-argument `_start` and ignore the extra register.
 
 ## Userland quickstart
 
@@ -219,7 +249,8 @@ See [`module-sdk/src/lib.rs`](module-sdk/src/lib.rs).
 
 ABI 10 adds `Context::block_read(target, lba, &mut sector)` for one 512-byte SCSI sector.
 ABI 11 adds `Context::block_write(target, lba, &sector)`; the kernel validates the buffer
-pointer and the device controls durability.
+pointer and the device controls durability. ABI 12 adds the loader/arena services and
+`Context::module_*` wrappers.
 [`examples/block`](examples/block) reads block 0 of target 1 and prints the volume-header
 magic; it is the reference for the block service:
 
@@ -321,17 +352,17 @@ PIC flag, dynamic segment, interpreter, TLS segment, undefined symbol, entry out
 | `examples/wasm-hello/` | Wasm `i7host` guest skeleton (CI) |
 | `examples/user-hello/` | Console/args/environment/BSS user example (CI) |
 | `examples/user-probe/` | Filesystem and clock user probe (CI) |
-| `manifest/` | `irix7-module-manifest`: `I7MM` record and `I7MF` footer model |
+| `manifest/` | `irix7-module-manifest`: `I7MM` v1/v2 record and `I7MF` footer model |
 | `template/` | Copyable module crate with an optional `manifest.json` |
 | `templates/user/` | Copyable user crate |
-| `testdata/` | Cross-implementation manifest vectors from the OS encoder |
+| `testdata/` | Manifest v1 compatibility and v2 cross-implementation vectors |
 | `tools/irix7-module.py` | Build, flatten, optionally manifest, and hash a module |
 | `tools/irix7_manifest.py` | `I7MM`/`I7MF` encoder, decoder and validation |
 | `tools/irix7-user.py` | Build, validate and pack a user image |
 | `tools/check-os-sync.py` | Compare the SDK target/ABI with an OS checkout |
 | `targets/` | `mips3-sgi-irix7-n32` and `mips3-sgi-irix7-native-n32` JSON |
 | `linker/` | Flat module linker and static user linker |
-| `docs/` | Module ABI, manifests, Wasm apps, userland and quickstarts |
+| `docs/` | Module ABI, loader, manifests, Wasm apps, userland and quickstarts |
 
 ## Licence
 

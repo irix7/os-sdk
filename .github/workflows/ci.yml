@@ -25,6 +25,7 @@ jobs:
         run: cargo clippy -p module-abi -p irix7-module-sdk -p irix7-module-manifest -p irix7-user-abi -p irix7-user-sdk --all-targets -- -D warnings
       - name: Host tests
         run: |
+          cargo test -p module-abi -p irix7-module-sdk
           cargo test -p irix7-module-manifest
           cargo test -p irix7-user-abi -p irix7-user-sdk
           python3 tools/tests/test_user_target.py
@@ -63,6 +64,8 @@ jobs:
           manifest, payload = irix7_manifest.parse_wrapped(image)
           assert manifest.name == 'hello-sdk', manifest.name
           assert manifest.version == '0.3.0', manifest.version
+          assert manifest.entry_offset == 0, manifest.entry_offset
+          assert data['manifest']['format'] == 2
           assert data['sha256'] == hashlib.sha256(image).hexdigest()
           assert data['size'] == len(image)
           assert data['image_size'] == len(payload)

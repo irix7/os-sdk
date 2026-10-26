@@ -6,16 +6,16 @@ llvm-objcopy, and prints the size, SHA-256 and a ready-to-paste console command.
 
 A module may declare a manifest. Pass ``--manifest-json PATH`` or the explicit
 ``--name``/``--version``/``--abi-major``/``--abi-minor`` flags, with optional
-``--depends`` and ``--export``. The tool appends the version 1 ``I7MM`` record
+``--depends`` and ``--export``. The tool appends the version 2 ``I7MM`` record
 and ``I7MF`` footer after the flattened image and hashes the complete image, so
 the printed digest is the one the kernel checks. Without a manifest option the
 output is exactly the flattened payload, as before.
 
 Example:
     tools/irix7-module.py --package hello-sdk
-    tools/irix7-module.py --manifest-path my-module/Cargo.toml \
+    tools/irix7-module.py --manifest-path my-module/Cargo.toml \\
         --package my-module --linker my-module/linker.ld
-    tools/irix7-module.py --package my-module \
+    tools/irix7-module.py --package my-module \\
         --manifest-json my-module/manifest.json
 
 The cargo target directory is read from `cargo metadata`, so workspaces and a
@@ -35,7 +35,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import irix7_manifest
 
-MANIFEST_FLAGS = ("name", "version", "abi_major", "abi_minor", "depends", "export")
+MANIFEST_FLAGS = (
+    "name",
+    "version",
+    "abi_major",
+    "abi_minor",
+    "entry_offset",
+    "depends",
+    "export",
+)
 
 
 def run(cmd, cwd, env=None):
@@ -103,6 +111,7 @@ def build_manifest(args, sdk):
             version=args.version,
             abi_major=args.abi_major,
             abi_minor=args.abi_minor,
+            entry_offset=args.entry_offset or 0,
             dependencies=tuple(
                 irix7_manifest.parse_dependency_spec(spec)
                 for spec in args.depends or []
@@ -163,7 +172,7 @@ def main():
     )
     manifest_group = parser.add_argument_group(
         "module manifest",
-        "Append a version 1 I7MM record and I7MF footer. Without any of these "
+        "Append a version 2 I7MM record and I7MF footer. Without any of these "
         "options the output is the plain flattened image.",
     )
     manifest_group.add_argument(
@@ -186,6 +195,11 @@ def main():
         help="module service table ABI revision (abi/src/lib.rs ABI_VERSION)",
     )
     manifest_group.add_argument(
+        "--entry-offset",
+        type=int,
+        help="image-relative manager entry offset (default 0 for _start)",
+    )
+    manifest_group.add_argument(
         "--depends",
         action="append",
         metavar="NAME@VERSION:SHA256",
@@ -194,8 +208,8 @@ def main():
     manifest_group.add_argument(
         "--export",
         action="append",
-        metavar="INTERFACE@VERSION",
-        help="exported interface; may be repeated",
+        metavar="INTERFACE@VERSION[:OFFSET]",
+        help="exported interface and optional table offset; may be repeated",
     )
     args = parser.parse_args()
 
@@ -272,6 +286,8 @@ def main():
     run([find_objcopy(), "-O", "binary", str(elf), str(output)], cwd=cargo_manifest.parent)
 
     image = output.read_bytes()
+    if manifest is not None:
+        irix7_manifest.validate_image_offsets(manifest, len(image))
     wrapped, digest, record_len = finish_image(image, manifest)
     if manifest is not None:
         output.write_bytes(wrapped)
@@ -296,6 +312,7 @@ def main():
             print(
                 f"manifest: {manifest.name}@{manifest.version} "
                 f"abi {manifest.abi_major}.{manifest.abi_minor}, "
+                f"entry {manifest.entry_offset}, "
                 f"{dependencies} "
                 f"{'dependency' if dependencies == 1 else 'dependencies'}, "
                 f"{exports} {'export' if exports == 1 else 'exports'} "

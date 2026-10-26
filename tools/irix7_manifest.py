@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""I7MM version 1 manifest records and I7MF image footers.
+"""I7MM manifest records (version 2, legacy version 1) and I7MF footers.
 
 This is the build-time SDK implementation of the module manifest format
 defined by ``crates/module-resolver`` in irix7/os (``docs/spec/modules.md``
-sections 8.1 and 8.2). The bytes are little-endian and identical to the OS
-Rust encoder; ``testdata/manifest-*.txt`` holds cross-implementation vectors
-produced by the OS crate.
+sections 8.1 and 8.2). Version 1 bytes are little-endian and identical to the
+OS Rust encoder; ``testdata/manifest-v1.txt`` and ``manifest-minimal.txt`` are
+the OS-produced compatibility vectors. Version 2 adds the manager entry offset
+and per-export table offsets and is emitted by this encoder.
 
 A module image may carry a manifest after its flattened payload::
 
     image bytes | I7MM record | I7MF footer
 
-The record is::
+The version 2 record is::
 
-    I7MM | u16 format=1 | u16 abi major | u16 abi minor
+    I7MM | u16 format=2 | u16 abi major | u16 abi minor
+         | u32 entry offset
          | u16 name length | UTF-8 name
          | u16 version length | UTF-8 version
          | u16 dependency count
          | (u16 name length, name, u16 version length, version, 32-byte SHA-256)*
          | u16 export count
-         | (u16 interface length, interface, u16 export version)*
+         | (u16 interface length, interface, u16 export version, u32 table offset)*
+
+Version 1 is the same record without the entry offset and table offsets; both
+decode as zero.
 
 The footer is 16 bytes::
 
@@ -29,10 +34,9 @@ There is no CRC. The SHA-256 of the complete image, including the record and
 the footer, is the integrity boundary. A standalone image without a footer
 remains valid.
 
-``encode_manifest`` and ``decode_manifest`` are byte-compatible with the OS
-codec. ``validate_manifest`` adds the SDK's build-time rules (symbol charset,
-duplicate and conflicting dependencies, duplicate exports and the service
-table ABI) that the wire format intentionally does not enforce.
+``validate_manifest`` adds the SDK's build-time rules (symbol charset,
+duplicate and conflicting dependencies, duplicate exports, offset alignment
+and the service table ABI) that the wire format intentionally does not enforce.
 """
 
 from __future__ import annotations
@@ -45,7 +49,8 @@ from dataclasses import dataclass
 from typing import Any
 
 MAGIC = b"I7MM"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+LEGACY_FORMAT_VERSION = 1
 MAX_RECORD = 64 * 1024
 
 FOOTER_MAGIC = b"I7MF"
@@ -53,6 +58,9 @@ FOOTER_VERSION = 1
 FOOTER_LEN = 16
 
 DIGEST_LEN = 32
+
+#: Entry and export table offsets must be aligned to this many bytes.
+MODULE_OFFSET_ALIGN = 4
 
 #: The module service table's breaking generation. The table is append-only,
 #: so every additive service bump increments the minor instead.
@@ -65,10 +73,19 @@ DIGEST_RE = re.compile(r"[0-9a-fA-F]{64}")
 ABI_VERSION_RE = re.compile(r"pub const ABI_VERSION: u32 = (\d+);")
 
 MANIFEST_KEYS = frozenset(
-    {"format", "name", "version", "abi_major", "abi_minor", "depends", "exports"}
+    {
+        "format",
+        "name",
+        "version",
+        "abi_major",
+        "abi_minor",
+        "entry_offset",
+        "depends",
+        "exports",
+    }
 )
 DEPENDENCY_KEYS = frozenset({"name", "version", "sha256"})
-EXPORT_KEYS = frozenset({"interface", "version"})
+EXPORT_KEYS = frozenset({"interface", "version", "offset"})
 
 
 class ManifestError(ValueError):
@@ -90,10 +107,11 @@ class Dependency:
 
 @dataclass(frozen=True)
 class Export:
-    """A versioned interface exported by a module."""
+    """A versioned interface and its image-relative function-table offset."""
 
     interface: str
     version: int
+    offset: int = 0
 
 
 @dataclass(frozen=True)
@@ -106,6 +124,7 @@ class Manifest:
     abi_minor: int
     dependencies: tuple[Dependency, ...] = ()
     exports: tuple[Export, ...] = ()
+    entry_offset: int = 0
 
 
 def _u16(value: Any, field: str) -> int:
@@ -113,6 +132,23 @@ def _u16(value: Any, field: str) -> int:
         raise ManifestError(f"{field} must be an integer")
     if not 0 <= value <= 0xFFFF:
         raise ManifestError(f"{field} {value} is outside 0..65535")
+    return value
+
+
+def _u32(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ManifestError(f"{field} must be an integer")
+    if not 0 <= value <= 0xFFFFFFFF:
+        raise ManifestError(f"{field} {value} is outside 0..4294967295")
+    return value
+
+
+def _offset(value: Any, field: str) -> int:
+    value = _u32(value, field)
+    if value % MODULE_OFFSET_ALIGN != 0:
+        raise ManifestError(
+            f"{field} {value} is not aligned to {MODULE_OFFSET_ALIGN} bytes"
+        )
     return value
 
 
@@ -155,13 +191,23 @@ def parse_dependency_spec(spec: str) -> Dependency:
 
 
 def parse_export_spec(spec: str) -> Export:
-    """Parse ``interface@version``."""
-    interface, at, raw = spec.partition("@")
-    if not at or not interface or not raw:
-        raise ManifestError(f"export {spec!r} must be interface@version")
-    if re.fullmatch(r"[0-9]+", raw) is None:
+    """Parse ``interface@version`` or ``interface@version:offset``."""
+    interface, at, rest = spec.partition("@")
+    if not at or not interface or not rest:
+        raise ManifestError(f"export {spec!r} must be interface@version[:offset]")
+    version, colon, raw_offset = rest.partition(":")
+    if re.fullmatch(r"[0-9]+", version) is None:
         raise ManifestError(f"export {spec!r} has a non-numeric version")
-    return Export(interface=interface, version=_u16(int(raw), f"export {interface!r} version"))
+    offset = 0
+    if colon:
+        if re.fullmatch(r"[0-9]+", raw_offset) is None:
+            raise ManifestError(f"export {spec!r} has a non-numeric offset")
+        offset = _offset(int(raw_offset), f"export {interface!r} offset")
+    return Export(
+        interface=interface,
+        version=_u16(int(version), f"export {interface!r} version"),
+        offset=offset,
+    )
 
 
 def _put_string(out: bytearray, value: str) -> None:
@@ -179,7 +225,7 @@ def _put_count(out: bytearray, count: int, field: str) -> None:
 
 
 def encode_manifest(manifest: Manifest) -> bytes:
-    """Encode a version 1 ``I7MM`` record.
+    """Encode a version 2 ``I7MM`` record.
 
     This performs only the bounds the wire format enforces: ``u16`` lengths,
     ``u16`` counts and the 64 KiB record limit. Call :func:`validate_manifest`
@@ -189,6 +235,7 @@ def encode_manifest(manifest: Manifest) -> bytes:
     out += struct.pack("<H", FORMAT_VERSION)
     out += struct.pack("<H", _u16(manifest.abi_major, "abi_major"))
     out += struct.pack("<H", _u16(manifest.abi_minor, "abi_minor"))
+    out += struct.pack("<I", _u32(manifest.entry_offset, "entry_offset"))
     _put_string(out, _string(manifest.name, "name"))
     _put_string(out, _string(manifest.version, "version"))
     _put_count(out, len(manifest.dependencies), "dependency")
@@ -205,6 +252,7 @@ def encode_manifest(manifest: Manifest) -> bytes:
     for export in manifest.exports:
         _put_string(out, _string(export.interface, "export interface"))
         out += struct.pack("<H", _u16(export.version, f"export {export.interface!r} version"))
+        out += struct.pack("<I", _u32(export.offset, f"export {export.interface!r} offset"))
     if len(out) > MAX_RECORD:
         raise ManifestError(
             f"manifest record is {len(out)} bytes; the limit is {MAX_RECORD}"
@@ -231,6 +279,9 @@ class _Reader:
     def u16(self) -> int:
         return struct.unpack("<H", self.take(2))[0]
 
+    def u32(self) -> int:
+        return struct.unpack("<I", self.take(4))[0]
+
     def string(self) -> str:
         raw = self.take(self.u16())
         try:
@@ -239,22 +290,7 @@ class _Reader:
             raise ManifestError("manifest string is not UTF-8") from error
 
 
-def decode_manifest(record: bytes) -> Manifest:
-    """Decode one complete version 1 ``I7MM`` record."""
-    if len(record) > MAX_RECORD:
-        raise ManifestError(f"manifest record is {len(record)} bytes; the limit is {MAX_RECORD}")
-    reader = _Reader(record)
-    if reader.remaining() < len(MAGIC):
-        raise ManifestError("manifest record is too short")
-    if reader.take(len(MAGIC)) != MAGIC:
-        raise ManifestError("manifest record has bad magic")
-    version = reader.u16()
-    if version != FORMAT_VERSION:
-        raise ManifestError(f"unsupported manifest record version {version}")
-    abi_major = reader.u16()
-    abi_minor = reader.u16()
-    name = reader.string()
-    module_version = reader.string()
+def _read_dependencies(reader: _Reader) -> list[Dependency]:
     dependency_count = reader.u16()
     # Every dependency is at least two u16 lengths plus a 32-byte digest.
     # Reject an impossible count before building a list for it.
@@ -262,11 +298,18 @@ def decode_manifest(record: bytes) -> Manifest:
         raise ManifestError("manifest record is truncated")
     dependencies = []
     for _ in range(dependency_count):
-        dependency_name = reader.string()
-        dependency_version = reader.string()
-        dependencies.append(
-            Dependency(dependency_name, dependency_version, reader.take(DIGEST_LEN))
-        )
+        name = reader.string()
+        version = reader.string()
+        dependencies.append(Dependency(name, version, reader.take(DIGEST_LEN)))
+    return dependencies
+
+
+def _decode_v1(reader: _Reader) -> Manifest:
+    abi_major = reader.u16()
+    abi_minor = reader.u16()
+    name = reader.string()
+    module_version = reader.string()
+    dependencies = _read_dependencies(reader)
     export_count = reader.u16()
     if export_count > reader.remaining() // 4:
         raise ManifestError("manifest record is truncated")
@@ -284,6 +327,57 @@ def decode_manifest(record: bytes) -> Manifest:
         dependencies=tuple(dependencies),
         exports=tuple(exports),
     )
+
+
+def _decode_v2(reader: _Reader) -> Manifest:
+    abi_major = reader.u16()
+    abi_minor = reader.u16()
+    entry_offset = reader.u32()
+    name = reader.string()
+    module_version = reader.string()
+    dependencies = _read_dependencies(reader)
+    export_count = reader.u16()
+    # Every export is at least two u16 lengths plus a u32 offset.
+    if export_count > reader.remaining() // 8:
+        raise ManifestError("manifest record is truncated")
+    exports = []
+    for _ in range(export_count):
+        interface = reader.string()
+        version = reader.u16()
+        offset = reader.u32()
+        exports.append(Export(interface, version, offset))
+    if reader.remaining() != 0:
+        raise ManifestError("manifest record has trailing bytes")
+    return Manifest(
+        name=name,
+        version=module_version,
+        abi_major=abi_major,
+        abi_minor=abi_minor,
+        dependencies=tuple(dependencies),
+        exports=tuple(exports),
+        entry_offset=entry_offset,
+    )
+
+
+def decode_manifest(record: bytes) -> Manifest:
+    """Decode a version 2 record or a legacy version 1 record.
+
+    A version 1 record decodes with ``entry_offset == 0`` and every export
+    offset equal to zero.
+    """
+    if len(record) > MAX_RECORD:
+        raise ManifestError(f"manifest record is {len(record)} bytes; the limit is {MAX_RECORD}")
+    reader = _Reader(record)
+    if reader.remaining() < len(MAGIC):
+        raise ManifestError("manifest record is too short")
+    if reader.take(len(MAGIC)) != MAGIC:
+        raise ManifestError("manifest record has bad magic")
+    version = reader.u16()
+    if version == LEGACY_FORMAT_VERSION:
+        return _decode_v1(reader)
+    if version == FORMAT_VERSION:
+        return _decode_v2(reader)
+    raise ManifestError(f"unsupported manifest record version {version}")
 
 
 def wrap_image(image: bytes, manifest: Manifest) -> bytes:
@@ -353,6 +447,7 @@ def validate_manifest(manifest: Manifest, sdk_abi: tuple[int, int]) -> None:
             f"ABI {abi_major}.{abi_minor} is newer than the SDK module ABI "
             f"{sdk_major}.{sdk_minor}"
         )
+    _offset(manifest.entry_offset, "entry_offset")
 
     seen: dict[str, str] = {}
     exact: set[tuple[str, str]] = set()
@@ -380,6 +475,7 @@ def validate_manifest(manifest: Manifest, sdk_abi: tuple[int, int]) -> None:
     for export in manifest.exports:
         _symbol(export.interface, "export interface")
         version = _u16(export.version, f"export {export.interface!r} version")
+        _offset(export.offset, f"export {export.interface!r} offset")
         key = (export.interface, version)
         if key in seen_exports:
             raise ManifestError(
@@ -391,6 +487,30 @@ def validate_manifest(manifest: Manifest, sdk_abi: tuple[int, int]) -> None:
     encode_manifest(manifest)
 
 
+def validate_image_offsets(manifest: Manifest, image_size: int) -> None:
+    """Check entry and export offsets against the flattened image size.
+
+    Offset zero means "legacy entry" or "no export table" and is always
+    accepted. A non-zero offset must leave at least one 32-bit cell inside the
+    image; offsets beyond the manifest/footer bytes are rejected.
+    """
+    if manifest.entry_offset:
+        _offset(manifest.entry_offset, "entry_offset")
+        if manifest.entry_offset + 4 > image_size:
+            raise ManifestError(
+                f"entry_offset {manifest.entry_offset} does not fit the "
+                f"{image_size}-byte image"
+            )
+    for export in manifest.exports:
+        if export.offset:
+            _offset(export.offset, f"export {export.interface!r} offset")
+            if export.offset + 4 > image_size:
+                raise ManifestError(
+                    f"export {export.interface}@{export.version} offset "
+                    f"{export.offset} does not fit the {image_size}-byte image"
+                )
+
+
 def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
     """Return the JSON shape accepted by :func:`manifest_from_json`."""
     return {
@@ -399,6 +519,7 @@ def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
         "version": manifest.version,
         "abi_major": manifest.abi_major,
         "abi_minor": manifest.abi_minor,
+        "entry_offset": manifest.entry_offset,
         "depends": [
             {
                 "name": dependency.name,
@@ -408,7 +529,11 @@ def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
             for dependency in manifest.dependencies
         ],
         "exports": [
-            {"interface": export.interface, "version": export.version}
+            {
+                "interface": export.interface,
+                "version": export.version,
+                "offset": export.offset,
+            }
             for export in manifest.exports
         ],
     }
@@ -427,12 +552,18 @@ def _require(item: dict[str, Any], key: str, where: str) -> Any:
 
 
 def manifest_from_json(data: Any) -> Manifest:
-    """Parse and validate the SDK manifest JSON document."""
+    """Parse the SDK manifest JSON document (version 2)."""
     if not isinstance(data, dict):
         raise ManifestError("manifest JSON must be an object")
     _reject_unknown(data, MANIFEST_KEYS, "manifest JSON")
     document_format = data.get("format", FORMAT_VERSION)
-    if isinstance(document_format, bool) or document_format != FORMAT_VERSION:
+    if isinstance(document_format, bool) or not isinstance(document_format, int):
+        raise ManifestError(f"manifest format {document_format!r} must be an integer")
+    if document_format == LEGACY_FORMAT_VERSION:
+        raise ManifestError(
+            "manifest format 1 is legacy and decode-only; omit format or use 2"
+        )
+    if document_format != FORMAT_VERSION:
         raise ManifestError(
             f"unsupported manifest format {document_format!r}; "
             f"only {FORMAT_VERSION} is implemented"
@@ -443,6 +574,7 @@ def manifest_from_json(data: Any) -> Manifest:
     )
     abi_major = _u16(_require(data, "abi_major", "manifest JSON"), "abi_major")
     abi_minor = _u16(_require(data, "abi_minor", "manifest JSON"), "abi_minor")
+    entry_offset = _offset(data.get("entry_offset", 0), "entry_offset")
 
     raw_dependencies = data.get("depends", [])
     if not isinstance(raw_dependencies, list):
@@ -478,6 +610,7 @@ def manifest_from_json(data: Any) -> Manifest:
                     _require(item, "interface", where), f"{where} interface"
                 ),
                 version=_u16(_require(item, "version", where), f"{where} version"),
+                offset=_offset(item.get("offset", 0), f"{where} offset"),
             )
         )
 
@@ -488,6 +621,7 @@ def manifest_from_json(data: Any) -> Manifest:
         abi_minor=abi_minor,
         dependencies=tuple(dependencies),
         exports=tuple(exports),
+        entry_offset=entry_offset,
     )
 
 

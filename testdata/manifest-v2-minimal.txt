@@ -1,0 +1,19 @@
+# I7MM version 2 minimal vector: no dependencies, no exports, entry 0.
+#
+# The Rust crate (manifest/) and tools/irix7_manifest.py must both
+# reproduce record_hex and wrapped_hex exactly.
+#
+format=2
+name=hello-sdk
+version=0.3.0
+abi_major=1
+abi_minor=12
+entry_offset=0
+dep_count=0
+export_count=0
+image_hex=0001020304050607
+record_hex=49374d4d020001000c0000000000090068656c6c6f2d73646b0500302e332e3000000000
+record_len=36
+wrapped_hex=000102030405060749374d4d020001000c0000000000090068656c6c6f2d73646b0500302e332e300000000049374d46010000000800000024000000
+wrapped_len=60
+wrapped_sha256=80174aeed8086094ab38292b80e36067f8b7fefd8ba4b29847e0a11c4d1de322

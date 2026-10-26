@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Host-side checks for the module manifest codec and the build tool.
 
-The vectors in ``testdata/`` were produced by the OS encoder in
-``crates/module-resolver`` (irix7/os at 5a7696e). These tests fail if the SDK's
-Python implementation drifts from that format; ``manifest/tests/vector.rs``
+The v1 vectors in ``testdata/`` were produced by the OS encoder in
+``crates/module-resolver`` (irix7/os at 5a7696e) and remain decode-only
+compatibility vectors. The v2 vectors are the SDK's canonical bytes. These
+tests fail if the Python and Rust implementations drift; ``manifest/tests``
 checks the Rust model against the same files.
 """
 
@@ -69,6 +70,7 @@ def manifest_from_vector(fields):
         codec.Export(
             fields[f"export{index}_interface"],
             int(fields[f"export{index}_version"]),
+            int(fields.get(f"export{index}_offset", 0)),
         )
         for index in range(int(fields["export_count"]))
     )
@@ -79,6 +81,7 @@ def manifest_from_vector(fields):
         abi_minor=int(fields["abi_minor"]),
         dependencies=dependencies,
         exports=exports,
+        entry_offset=int(fields.get("entry_offset", 0)),
     )
 
 
@@ -92,6 +95,23 @@ def sample_manifest(**overrides):
             codec.Dependency("mesh.codec", "1.0.0", b"\x11" * 32),
         ),
         "exports": (codec.Export("irix7.mesh.transport", 1),),
+        "entry_offset": 0,
+    }
+    values.update(overrides)
+    return codec.Manifest(**values)
+
+
+def offset_manifest(**overrides):
+    values = {
+        "name": "mesh.transport",
+        "version": "1.2.3",
+        "abi_major": SDK_ABI[0],
+        "abi_minor": SDK_ABI[1],
+        "dependencies": (
+            codec.Dependency("mesh.codec", "1.0.0", b"\x11" * 32),
+        ),
+        "exports": (codec.Export("irix7.mesh.transport", 1, 0x80),),
+        "entry_offset": 0x40,
     }
     values.update(overrides)
     return codec.Manifest(**values)
@@ -104,6 +124,7 @@ def cli_args(**overrides):
         "version": None,
         "abi_major": None,
         "abi_minor": None,
+        "entry_offset": None,
         "depends": None,
         "export": None,
     }
@@ -115,16 +136,24 @@ class VectorTest(unittest.TestCase):
     def check(self, name):
         fields = load_vector(name)
         manifest = manifest_from_vector(fields)
-        self.assertEqual(int(fields["format"]), codec.FORMAT_VERSION)
+        format_version = int(fields["format"])
 
-        record = codec.encode_manifest(manifest)
+        record = bytes.fromhex(fields["record_hex"])
         self.assertEqual(len(record), int(fields["record_len"]))
-        self.assertEqual(record.hex(), fields["record_hex"])
+        self.assertEqual(codec.decode_manifest(record), manifest)
+        if format_version == codec.LEGACY_FORMAT_VERSION:
+            self.assertEqual(manifest.entry_offset, 0)
+            self.assertTrue(all(export.offset == 0 for export in manifest.exports))
+        else:
+            self.assertEqual(format_version, codec.FORMAT_VERSION)
+            self.assertEqual(codec.encode_manifest(manifest), record)
 
         image = bytes.fromhex(fields["image_hex"])
-        wrapped = codec.wrap_image(image, manifest)
+        codec.validate_image_offsets(manifest, len(image))
+        wrapped = bytes.fromhex(fields["wrapped_hex"])
         self.assertEqual(len(wrapped), int(fields["wrapped_len"]))
-        self.assertEqual(wrapped.hex(), fields["wrapped_hex"])
+        if format_version == codec.FORMAT_VERSION:
+            self.assertEqual(codec.wrap_image(image, manifest), wrapped)
         self.assertEqual(
             hashlib.sha256(wrapped).hexdigest(), fields["wrapped_sha256"]
         )
@@ -136,30 +165,63 @@ class VectorTest(unittest.TestCase):
         self.assertEqual(int.from_bytes(footer[8:12], "little"), len(image))
         self.assertEqual(int.from_bytes(footer[12:16], "little"), len(record))
 
-        self.assertEqual(codec.decode_manifest(record), manifest)
         self.assertEqual(codec.parse_wrapped(wrapped), (manifest, image))
         self.assertIsNone(codec.parse_wrapped(image))
 
-    def test_full_vector_matches_the_os_encoder(self):
+    def test_full_v1_vector_decodes(self):
         self.check("manifest-v1.txt")
 
-    def test_minimal_vector_matches_the_os_encoder(self):
+    def test_minimal_v1_vector_decodes(self):
         self.check("manifest-minimal.txt")
 
+    def test_full_v2_vector_matches_both_implementations(self):
+        self.check("manifest-v2.txt")
+
+    def test_minimal_v2_vector_matches_both_implementations(self):
+        self.check("manifest-v2-minimal.txt")
+
     def test_vector_manifest_passes_sdk_validation(self):
-        codec.validate_manifest(manifest_from_vector(load_vector("manifest-v1.txt")), SDK_ABI)
+        self.check("manifest-v2.txt")
+        codec.validate_manifest(
+            manifest_from_vector(load_vector("manifest-v2.txt")), SDK_ABI
+        )
 
 
 class CodecTest(unittest.TestCase):
     def test_little_endian_header(self):
-        record = codec.encode_manifest(sample_manifest())
+        record = codec.encode_manifest(offset_manifest())
         self.assertEqual(record[:4], b"I7MM")
-        self.assertEqual(int.from_bytes(record[4:6], "little"), 1)
+        self.assertEqual(int.from_bytes(record[4:6], "little"), 2)
         self.assertEqual(int.from_bytes(record[6:8], "little"), SDK_ABI[0])
         self.assertEqual(int.from_bytes(record[8:10], "little"), SDK_ABI[1])
+        self.assertEqual(int.from_bytes(record[10:14], "little"), 0x40)
 
     def test_round_trip_preserves_every_field(self):
-        manifest = sample_manifest()
+        manifest = offset_manifest()
+        self.assertEqual(codec.decode_manifest(codec.encode_manifest(manifest)), manifest)
+
+    def test_version_1_record_decodes_with_zero_offsets(self):
+        record = (
+            b"I7MM"
+            + (1).to_bytes(2, "little")
+            + (1).to_bytes(2, "little")
+            + (12).to_bytes(2, "little")
+            + (1).to_bytes(2, "little")
+            + b"m"
+            + (3).to_bytes(2, "little")
+            + b"1.0"
+            + (0).to_bytes(2, "little")
+            + (1).to_bytes(2, "little")
+            + (1).to_bytes(2, "little")
+            + b"i"
+            + (7).to_bytes(2, "little")
+        )
+        manifest = codec.decode_manifest(record)
+        self.assertEqual(manifest.name, "m")
+        self.assertEqual(manifest.version, "1.0")
+        self.assertEqual(manifest.entry_offset, 0)
+        self.assertEqual(manifest.exports, (codec.Export("i", 7),))
+        self.assertEqual(manifest.exports[0].offset, 0)
         self.assertEqual(codec.decode_manifest(codec.encode_manifest(manifest)), manifest)
 
     def test_standalone_image_has_no_footer(self):
@@ -174,8 +236,8 @@ class CodecTest(unittest.TestCase):
 
     def test_unsupported_record_version_is_rejected(self):
         record = bytearray(codec.encode_manifest(sample_manifest()))
-        record[4:6] = (2).to_bytes(2, "little")
-        with self.assertRaisesRegex(codec.ManifestError, "version 2"):
+        record[4:6] = (3).to_bytes(2, "little")
+        with self.assertRaisesRegex(codec.ManifestError, "version 3"):
             codec.decode_manifest(bytes(record))
 
     def test_truncated_record_is_rejected(self):
@@ -191,7 +253,8 @@ class CodecTest(unittest.TestCase):
 
     def test_invalid_utf8_is_rejected(self):
         record = bytearray(codec.encode_manifest(sample_manifest()))
-        record[12] = 0xFF
+        # Magic, format, ABI, entry offset and the name length: 4 + 2 + 2 + 2 + 4 + 2.
+        record[16] = 0xFF
         with self.assertRaisesRegex(codec.ManifestError, "UTF-8"):
             codec.decode_manifest(bytes(record))
 
@@ -201,7 +264,7 @@ class CodecTest(unittest.TestCase):
 
     def test_impossible_dependency_count_is_rejected(self):
         record = bytearray(codec.encode_manifest(sample_manifest()))
-        header = 4 + 2 + 2 + 2
+        header = 4 + 2 + 2 + 2 + 4
         name_len = int.from_bytes(record[header : header + 2], "little")
         version_offset = header + 2 + name_len
         version_len = int.from_bytes(record[version_offset : version_offset + 2], "little")
@@ -278,11 +341,12 @@ class FooterTest(unittest.TestCase):
 
 
 class ValidationTest(unittest.TestCase):
-    def validate(self, manifest, sdk_abi=(1, 11)):
+    def validate(self, manifest, sdk_abi=(1, 12)):
         codec.validate_manifest(manifest, sdk_abi)
 
     def test_accepts_a_valid_manifest(self):
         self.validate(sample_manifest())
+        self.validate(offset_manifest())
 
     def test_accepts_an_older_minor(self):
         self.validate(sample_manifest(abi_minor=1), sdk_abi=(1, 11))
@@ -336,6 +400,27 @@ class ValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(codec.ManifestError, "unsupported characters"):
             self.validate(sample_manifest(version="1.0.0 space"))
 
+    def test_rejects_a_misaligned_entry_offset(self):
+        with self.assertRaisesRegex(codec.ManifestError, "aligned to 4 bytes"):
+            self.validate(sample_manifest(entry_offset=2))
+
+    def test_rejects_a_misaligned_export_offset(self):
+        with self.assertRaisesRegex(codec.ManifestError, "aligned to 4 bytes"):
+            self.validate(
+                sample_manifest(exports=(codec.Export("i", 1, 2),))
+            )
+
+    def test_image_offsets_must_fit_the_flattened_image(self):
+        manifest = offset_manifest()
+        codec.validate_image_offsets(manifest, 0x100)
+        with self.assertRaisesRegex(codec.ManifestError, "entry_offset 64"):
+            codec.validate_image_offsets(manifest, 64)
+        with self.assertRaisesRegex(codec.ManifestError, "offset 128"):
+            codec.validate_image_offsets(manifest, 128)
+
+    def test_zero_offsets_are_not_image_checked(self):
+        codec.validate_image_offsets(sample_manifest(), 0)
+
 
 class SpecTest(unittest.TestCase):
     def test_dependency_spec(self):
@@ -359,6 +444,12 @@ class SpecTest(unittest.TestCase):
     def test_export_spec(self):
         export = codec.parse_export_spec("irix7.mesh.transport@1")
         self.assertEqual(export, codec.Export("irix7.mesh.transport", 1))
+        export = codec.parse_export_spec("irix7.mesh.transport@1:128")
+        self.assertEqual(export, codec.Export("irix7.mesh.transport", 1, 128))
+        with self.assertRaisesRegex(codec.ManifestError, "aligned to 4 bytes"):
+            codec.parse_export_spec("irix7.mesh.transport@1:2")
+        with self.assertRaisesRegex(codec.ManifestError, "non-numeric offset"):
+            codec.parse_export_spec("irix7.mesh.transport@1:abc")
 
     def test_export_spec_rejects_bad_versions(self):
         specs = (
@@ -376,7 +467,7 @@ class SpecTest(unittest.TestCase):
 
 class JsonTest(unittest.TestCase):
     def test_round_trip(self):
-        manifest = sample_manifest()
+        manifest = offset_manifest()
         self.assertEqual(codec.manifest_from_json(codec.manifest_to_json(manifest)), manifest)
 
     def test_rejects_unknown_keys(self):
@@ -398,16 +489,39 @@ class JsonTest(unittest.TestCase):
             with self.assertRaisesRegex(codec.ManifestError, f"missing '{field}'"):
                 codec.manifest_from_json(document)
 
+    def test_rejects_legacy_format_documents(self):
+        document = codec.manifest_to_json(sample_manifest())
+        document["format"] = 1
+        with self.assertRaisesRegex(codec.ManifestError, "legacy and decode-only"):
+            codec.manifest_from_json(document)
+
     def test_rejects_an_unsupported_format(self):
         document = codec.manifest_to_json(sample_manifest())
-        document["format"] = 2
-        with self.assertRaisesRegex(codec.ManifestError, "unsupported manifest format 2"):
+        document["format"] = 3
+        with self.assertRaisesRegex(codec.ManifestError, "unsupported manifest format 3"):
+            codec.manifest_from_json(document)
+
+        document = codec.manifest_to_json(sample_manifest())
+        document["format"] = 2.0
+        with self.assertRaisesRegex(codec.ManifestError, "must be an integer"):
+            codec.manifest_from_json(document)
+
+    def test_rejects_misaligned_offsets(self):
+        document = codec.manifest_to_json(sample_manifest())
+        document["entry_offset"] = 2
+        with self.assertRaisesRegex(codec.ManifestError, "aligned to 4 bytes"):
+            codec.manifest_from_json(document)
+
+        document = codec.manifest_to_json(offset_manifest())
+        document["exports"][0]["offset"] = 130
+        with self.assertRaisesRegex(codec.ManifestError, "aligned to 4 bytes"):
             codec.manifest_from_json(document)
 
     def test_rejects_wrong_types(self):
         cases = (
             ("abi_major", "1", "abi_major must be an integer"),
             ("abi_minor", -1, "outside 0..65535"),
+            ("entry_offset", "64", "entry_offset must be an integer"),
             ("version", 3, "manifest version must be a string"),
             ("depends", {}, "depends must be a list"),
         )
@@ -462,11 +576,12 @@ class BuildManifestTest(unittest.TestCase):
                 version="1.2.3",
                 abi_major=SDK_ABI[0],
                 abi_minor=SDK_ABI[1],
+                entry_offset=0x40,
                 depends=["mesh.codec@1.0.0:" + "11" * 32],
-                export=["irix7.mesh.transport@1"],
+                export=["irix7.mesh.transport@1:128"],
             )
         )
-        self.assertEqual(manifest, sample_manifest())
+        self.assertEqual(manifest, offset_manifest())
 
     def test_json_and_flags_encode_identically(self):
         expected = self.build(
@@ -475,13 +590,14 @@ class BuildManifestTest(unittest.TestCase):
                 version="1.2.3",
                 abi_major=SDK_ABI[0],
                 abi_minor=SDK_ABI[1],
+                entry_offset=0x40,
                 depends=["mesh.codec@1.0.0:" + "11" * 32],
-                export=["irix7.mesh.transport@1"],
+                export=["irix7.mesh.transport@1:128"],
             )
         )
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "manifest.json"
-            path.write_text(json.dumps(codec.manifest_to_json(sample_manifest())))
+            path.write_text(json.dumps(codec.manifest_to_json(offset_manifest())))
             manifest = self.build(cli_args(manifest_json=str(path)))
         self.assertEqual(
             codec.encode_manifest(manifest), codec.encode_manifest(expected)
@@ -526,7 +642,7 @@ class BuildToolTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = pathlib.Path(self.directory.name)
-        self.fixture = b"IRIX7 flat module fixture\x00\x01\x02"
+        self.fixture = bytes(range(256))
         self.fixture_path = self.root / "fixture.bin"
         self.fixture_path.write_bytes(self.fixture)
         self.output = self.root / "hello-sdk.module"
@@ -604,7 +720,7 @@ class BuildToolTest(unittest.TestCase):
         self.assertEqual(data["sha256"], hashlib.sha256(self.fixture).hexdigest())
 
     def test_manifest_json_appends_the_record_and_hashes_the_image(self):
-        manifest = sample_manifest()
+        manifest = offset_manifest()
         path = self.root / "manifest.json"
         path.write_text(json.dumps(codec.manifest_to_json(manifest)))
         result = self.run_tool("--manifest-json", str(path))
@@ -624,7 +740,7 @@ class BuildToolTest(unittest.TestCase):
         self.assertEqual(codec.parse_wrapped(self.output.read_bytes()), (manifest, self.fixture))
 
     def test_inline_flags_match_the_json_manifest(self):
-        manifest = sample_manifest()
+        manifest = offset_manifest()
         result = self.run_tool(
             "--name",
             manifest.name,
@@ -634,10 +750,12 @@ class BuildToolTest(unittest.TestCase):
             str(manifest.abi_major),
             "--abi-minor",
             str(manifest.abi_minor),
+            "--entry-offset",
+            str(manifest.entry_offset),
             "--depends",
             "mesh.codec@1.0.0:" + "11" * 32,
             "--export",
-            "irix7.mesh.transport@1",
+            "irix7.mesh.transport@1:128",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -658,6 +776,23 @@ class BuildToolTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("manifest:", result.stderr)
         self.assertFalse(self.output.exists())
+
+    def test_entry_offset_beyond_the_image_is_rejected(self):
+        result = self.run_tool(
+            "--name",
+            "m",
+            "--version",
+            "1.0.0",
+            "--abi-major",
+            str(SDK_ABI[0]),
+            "--abi-minor",
+            str(SDK_ABI[1]),
+            "--entry-offset",
+            "1024",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("does not fit", result.stderr)
+        self.assertIsNone(codec.parse_wrapped(self.output.read_bytes()))
 
 
 if __name__ == "__main__":
