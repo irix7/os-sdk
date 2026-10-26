@@ -197,6 +197,10 @@ A host module may carry a module manifest (`I7MM`/`I7MF`) like any other flat im
 module, not to the guest. The guest has no name, version or ABI record of its own beyond
 `HOST_ABI_VERSION`.
 
+ABI 12's loader/arena services ([`module-loader.md`](module-loader.md)) apply to flat
+n32 images. They do not change `i7host`, WASI or the guest surface: a manager can load
+the n32 host module that embeds the guest, but it does not load a `.wasm` file directly.
+
 ## What is not available
 
 - WASI, libc, filesystem or socket calls from the guest.

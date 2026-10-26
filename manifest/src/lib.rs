@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Build-time manifest records and image footers for IRIX 7 modules.
 //!
-//! This crate is the SDK-side model for the wire format implemented by
+//! This crate is the SDK-side model for the wire format defined by
 //! `crates/module-resolver` in [irix7/os](https://github.com/irix7/os)
-//! (`docs/spec/modules.md` §8.1 and §8.2). It does not load or execute a
-//! module: the OS resolver remains the host-side dependency resolver.
+//! (`docs/spec/modules.md` §8.1 and §8.2) for version 1. Version 2 is the
+//! SDK loader-binding extension. It does not load or execute a module: the OS
+//! resolver remains the host-side dependency resolver.
 //!
-//! A module image may append a version 1 manifest record and a [`footer`]:
+//! A module image may append a version 2 manifest record and a [`footer`]:
 //!
 //! ```text
 //! image bytes | I7MM record | I7MF footer
 //! ```
+//!
+//! Version 2 adds the manager entry offset and an image-relative offset for
+//! each exported function table, so a manager can enter a dependency and bind
+//! an export without symbol relocation. The encoder emits version 2; the
+//! decoder also accepts legacy version 1 records (entry and export offsets
+//! default to zero).
 //!
 //! The record is little-endian and limited to [`MAX_RECORD`] (64 KiB). There
 //! is no CRC: the SHA-256 of the complete image, including the record and the
@@ -18,9 +25,10 @@
 //! remains valid, so an older module has no manifest and is treated as a
 //! single self-contained module.
 //!
-//! The module service table in `module-abi` is unchanged. A manifest is
-//! trailing data that the current kernel does not read; nothing in this crate
-//! changes the service ABI or the entry point at offset 0.
+//! A manifest is trailing data that the current kernel does not read, and the
+//! kernel does not parse it. The ABI 12 loader passes entry and export offsets
+//! explicitly, so resolution remains in the manager. Nothing in this crate
+//! changes the entry at image offset 0.
 //!
 //! # ABI convention
 //!
@@ -28,12 +36,12 @@
 //! service table's breaking generation and its additive revision:
 //!
 //! - [`SERVICE_ABI_MAJOR`] is `1`: the append-only table generation;
-//! - [`SERVICE_ABI_MINOR`] is [`module_abi::ABI_VERSION`] (currently 11).
+//! - [`SERVICE_ABI_MINOR`] is [`module_abi::ABI_VERSION`] (currently 12).
 //!
 //! A host accepts a module when the major is equal and the host minor is at
 //! least the module minor, matching `module_resolver::Abi::is_compatible_with`.
 //! Expressing the single table version as a minor is required by that rule: a
-//! module built for table 10 must run on a host at table 11, which a
+//! module built for table 10 must run on a host at table 12, which a
 //! `major = 10, minor = 0` encoding would wrongly reject.
 //!
 //! # Example
@@ -43,7 +51,7 @@
 //!
 //! let manifest = Manifest::new("mesh.transport", "1.2.3", Abi::new(1, 0))
 //!     .with_dependency(Dependency::new("mesh.codec", "1.0.0", [0x11; 32]))
-//!     .with_export(Export::new("irix7.mesh.transport", 1));
+//!     .with_export(Export::at("irix7.mesh.transport", 1, 0x80));
 //! let image = footer::wrap(b"flat module bytes", &manifest).expect("wrap");
 //! assert_eq!(footer::parse(&image).expect("parse").expect("footer").1, b"flat module bytes");
 //! ```
@@ -60,7 +68,7 @@ pub mod footer;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-pub use codec::{DecodeError, EncodeError, MAX_RECORD};
+pub use codec::{DecodeError, EncodeError, FORMAT_VERSION, FORMAT_VERSION_V1, MAX_RECORD};
 pub use footer::FOOTER_LEN;
 pub use footer::{FORMAT_VERSION as FOOTER_VERSION, MAGIC as FOOTER_MAGIC};
 
@@ -153,14 +161,23 @@ pub struct Export {
     pub interface: String,
     /// Interface version.
     pub version: u16,
+    /// Image-relative offset of the interface's C function table, or zero for
+    /// an interface-only declaration.
+    pub offset: u32,
 }
 
 impl Export {
-    /// Construct an export declaration.
+    /// Construct an export declaration without a table offset.
     pub fn new(interface: impl Into<String>, version: u16) -> Self {
+        Self::at(interface, version, 0)
+    }
+
+    /// Construct an export declaration at an image-relative table offset.
+    pub fn at(interface: impl Into<String>, version: u16, offset: u32) -> Self {
         Self {
             interface: interface.into(),
             version,
+            offset,
         }
     }
 }
@@ -172,6 +189,9 @@ pub struct Manifest {
     pub id: ModuleId,
     /// ABI the image was built for.
     pub abi: Abi,
+    /// Image-relative offset of the manager entry, or zero for a legacy
+    /// `_start(const Services *)` entry.
+    pub entry_offset: u32,
     /// Exact runtime dependencies.
     pub dependencies: Vec<Dependency>,
     /// Interfaces this module provides.
@@ -184,6 +204,7 @@ impl Manifest {
         Self {
             id: ModuleId::new(name, version),
             abi,
+            entry_offset: 0,
             dependencies: Vec::new(),
             exports: Vec::new(),
         }
@@ -192,6 +213,12 @@ impl Manifest {
     /// Construct a manifest for the SDK's current service table.
     pub fn sdk(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self::new(name, version, SERVICE_ABI)
+    }
+
+    /// Set the image-relative manager entry offset.
+    pub fn with_entry_offset(mut self, entry_offset: u32) -> Self {
+        self.entry_offset = entry_offset;
+        self
     }
 
     /// Add an exact dependency declaration.

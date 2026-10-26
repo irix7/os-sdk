@@ -1,9 +1,10 @@
 {
-  "format": 1,
+  "format": 2,
   "name": "my-module",
   "version": "0.3.0",
   "abi_major": 1,
   "abi_minor": 10,
+  "entry_offset": 0,
   "depends": [],
   "exports": []
 }

@@ -1,8 +1,9 @@
 # I7MM/I7MF version 1 minimal vector: no dependencies, no exports.
 #
-# The record_hex and wrapped_hex bytes below are the canonical output of
-# module_resolver::footer::wrap in irix7/os at 5a7696e. The ABI is the
-# current SDK service table, 1.11.
+# The record_hex and wrapped_hex bytes below are the canonical version 1
+# output of module_resolver::footer::wrap in irix7/os at 5a7696e. The
+# record declares ABI 1.11, the SDK table when the vector was generated;
+# it is a decode-only compatibility vector. The SDK encoder emits v2.
 #
 format=1
 name=hello-sdk

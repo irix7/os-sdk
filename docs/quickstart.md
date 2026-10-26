@@ -11,9 +11,13 @@ python3 tools/irix7-module.py --package hello-sdk
 The tool runs `cargo build` for the n32 target, flattens the ELF to
 `hello-sdk.module`, and prints the size, SHA-256 and a load command.
 
+> SDK main targets module ABI **12**. A kernel that reports an older service table
+> rejects a v12 module at entry (`Context::new` fails and the entry returns null).
+> Use the SDK tag pinned by your OS release until the ABI 12 loader lands.
+
 ### Optional module manifest
 
-Add `--manifest-json manifest.json` to append the version 1 `I7MM` record and
+Add `--manifest-json manifest.json` to append the version 2 `I7MM` record and
 `I7MF` footer. The printed SHA-256 then covers the image, record and footer:
 
 ```bash
@@ -23,9 +27,19 @@ python3 tools/irix7-module.py \
 ```
 
 The template ships a starter [`manifest.json`](../template/manifest.json). See
-[`module-manifest.md`](module-manifest.md) for the schema, the explicit
-`--name`/`--version`/`--abi-*`/`--depends`/`--export` flags and the ABI mapping.
-Without a manifest option the image is exactly the flattened payload, as before.
+[`module-manifest.md`](module-manifest.md) for the schema, the
+`--entry-offset`/`--export interface@version[:offset]` flags, the ABI mapping and
+the v1 compatibility rule. Without a manifest option the image is exactly the
+flattened payload, as before.
+
+### Module loader ABI
+
+ABI 12 appends `module_arena`, `module_load`, `module_execute`, `module_find`,
+`module_find_export`, `module_query` and `module_unload` at `0x54`-`0x6c`. They
+let a downloadable manager load verified dependencies into the arena and enter
+them with a manager context. The OS kernel does not implement them yet; see
+[`module-loader.md`](module-loader.md) for the exact contract and the freeze
+exception.
 
 ## Build a Wasm guest
 
@@ -128,10 +142,10 @@ python3 tools/irix7-module.py \
   --output my-module.module
 ```
 
-The generated `manifest.json` names `my-module` at version `0.3.0` and ABI 1.10,
-matching the template's pinned `module-sdk` tag. Rename the package and update
-`name`, `version` and `abi_minor` together when you change either; drop
-`--manifest-json` to build a standalone image with no manifest.
+The generated `manifest.json` uses format 2 and names `my-module` at version
+`0.3.0` and ABI 1.10, matching the template's pinned `module-sdk` tag. Rename the
+package and update `name`, `version` and `abi_minor` together when you change
+either; drop `--manifest-json` to build a standalone image with no manifest.
 
 ## Use the user template
 
@@ -151,7 +165,9 @@ python3 tools/irix7-user.py \
 - [`../user-sdk/src/lib.rs`](../user-sdk/src/lib.rs): the user runtime API.
 - [`abi.md`](abi.md): the module service-table version and append-only rule.
 - [`module-manifest.md`](module-manifest.md): the manifest JSON, `I7MM`/`I7MF`
-  format, dependency digests and ABI mapping.
+  v1/v2 format, dependency digests, entry/export offsets and ABI mapping.
+- [`module-loader.md`](module-loader.md): the ABI 12 arena/load/execute/lookup
+  contract, statuses, freeze exception and remaining OS work.
 - [`wasm-apps.md`](wasm-apps.md): what a Wasm app is, its build and embedding
   path, and the current runtime boundary.
 - [`user-abi.md`](user-abi.md): the provisional user syscall table and layouts.

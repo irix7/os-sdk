@@ -1,9 +1,10 @@
 # I7MM/I7MF version 1 cross-implementation vector.
 #
-# The record_hex and wrapped_hex bytes below are the canonical output of
-# module_resolver::footer::wrap in irix7/os at 5a7696e. The SDK's Rust
-# crate (manifest/) and tools/irix7_manifest.py must reproduce them
-# byte-for-byte. Do not regenerate this file from the SDK's own encoder.
+# The record_hex and wrapped_hex bytes below are the canonical version 1
+# output of module_resolver::footer::wrap in irix7/os at 5a7696e. They are
+# decode-only compatibility vectors: the SDK encoder emits version 2, so
+# both decoders must accept these bytes and default entry/export offsets to
+# zero. Do not regenerate this file from the SDK's own encoder.
 #
 format=1
 name=mesh.transport
