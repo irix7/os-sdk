@@ -1,0 +1,13 @@
+[package]
+name = "irix7-module-manifest"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Build-time IRIX 7 module manifest records (I7MM) and footers (I7MF)"
+
+[lib]
+name = "module_manifest"
+path = "src/lib.rs"
+
+[dependencies]
+module-abi = { path = "../abi" }

@@ -17,6 +17,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "irix7-module-manifest"
+version = "0.1.0"
+dependencies = [
+ "module-abi",
+]
+
+[[package]]
 name = "irix7-module-sdk"
 version = "0.3.0"
 dependencies = [

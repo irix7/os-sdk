@@ -2,6 +2,7 @@
 /template/target
 /examples/user-hello/target
 /examples/user-probe/target
+/examples/wasm-hello/target
 /templates/user/target
 __pycache__/
 *.py[cod]

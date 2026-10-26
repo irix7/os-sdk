@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "abi",
     "wasm-abi",
+    "manifest",
     "module-sdk",
     "user-abi",
     "user-sdk",
@@ -15,6 +16,7 @@ exclude = [
     "templates/user",
     "examples/user-hello",
     "examples/user-probe",
+    "examples/wasm-hello",
 ]
 default-members = ["module-sdk", "user-sdk"]
 
