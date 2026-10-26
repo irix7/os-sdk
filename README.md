@@ -20,12 +20,16 @@ source of truth for the contract.
 
 - `module-sdk`: a `Context` over the kernel service table, plus `entry!` and
   `panic_handler!` macros.
+- `manifest`: the build-time module manifest model: the OS `I7MM` record and `I7MF`
+  footer, with the same encoder, decoder and limits as the OS resolver.
+- `wasm-abi`: the draft `i7host` host-call ABI and guest layouts for Wasm applications.
 - `user-abi`: the provisional native n32 userland syscall numbers, flags and C layouts.
 - `user-sdk`: the static user runtime: `_start`, arguments/environment, console,
   descriptors, directories and clocks.
 - `targets/` and `linker/`: the kernel/module target and flat linker, plus the
   distinct native user target and user linker.
-- `tools/irix7-module.py`: builds, flattens, hashes and prints the module load command.
+- `tools/irix7-module.py`: builds, flattens, hashes and prints the module load command,
+  optionally appending a manifest and footer.
 - `tools/irix7-user.py`: builds a user image, validates the n32 ELF and packs the
   256 KiB target-2 image.
 - `template/` and `templates/user/`: copyable module and user crates.
@@ -87,6 +91,45 @@ mcp.token=<optional bearer token for MCP>
 The environment lives at DS1386 register offset `0x10`; see the OS
 [module specification](https://github.com/irix7/os/blob/main/docs/spec/modules.md).
 
+## Module manifests and runtime dependencies
+
+A module may declare a manifest: its exact name and version, the service-table ABI it
+was built for, exact dependencies with SHA-256 digests, and the interfaces it exports.
+Pass `--manifest-json` (or the explicit `--name`/`--version`/`--abi-*`/`--depends`/
+`--export` flags) and the tool appends the version 1 `I7MM` record and `I7MF` footer
+after the flattened image:
+
+```json
+{
+  "format": 1,
+  "name": "mesh.transport",
+  "version": "1.2.3",
+  "abi_major": 1,
+  "abi_minor": 11,
+  "depends": [
+    {
+      "name": "mesh.codec",
+      "version": "1.0.0",
+      "sha256": "<64 hex digits over the dependency image>"
+    }
+  ],
+  "exports": [{ "interface": "irix7.mesh.transport", "version": 1 }]
+}
+```
+
+```bash
+python3 tools/irix7-module.py --package my-module --manifest-json my-module/manifest.json
+```
+
+The printed SHA-256 then covers image, record and footer, and is the digest the
+`module` command and the `mcp.sha256` autoload key check. A module built without a
+manifest option is byte-for-byte the same flat image as before and remains a valid
+standalone module. Manifests change no service ABI: the kernel does not read the
+trailing data, and the entry point stays at offset 0. See
+[`docs/module-manifest.md`](docs/module-manifest.md) for the JSON schema, the exact
+wire format, the ABI mapping and the current limits. The OS resolver in
+`crates/module-resolver` remains the runtime/host authority.
+
 ## Userland quickstart
 
 ```bash
@@ -128,8 +171,13 @@ python3 tools/irix7-module.py \
   --manifest-path my-module/Cargo.toml \
   --package my-module \
   --linker my-module/linker.ld \
+  --manifest-json my-module/manifest.json \
   --output my-module.module
 ```
+
+The generated `manifest.json` is an optional starter: it names `my-module` at version
+`0.3.0` with ABI 1.10, matching the template's pinned `module-sdk` tag. Drop the flag
+for a standalone image, or update the manifest when you rename or bump the crate.
 
 User programs:
 
@@ -170,6 +218,8 @@ BGR screen shadow, allocation, two TCP slots, PROM environment lookup and reset/
 See [`module-sdk/src/lib.rs`](module-sdk/src/lib.rs).
 
 ABI 10 adds `Context::block_read(target, lba, &mut sector)` for one 512-byte SCSI sector.
+ABI 11 adds `Context::block_write(target, lba, &sector)`; the kernel validates the buffer
+pointer and the device controls durability.
 [`examples/block`](examples/block) reads block 0 of target 1 and prints the volume-header
 magic; it is the reference for the block service:
 
@@ -188,6 +238,45 @@ the same `*const Services` pointer, so `Context::new` reconstructs the context.
 Modules run in **kernel mode**. The SHA-256 digest is the trust boundary; there is no
 sandbox. Keep the image under 2 MiB and do not assume relocations: it is linked at
 `0x88400000`.
+
+## Writing a WebAssembly app
+
+A Wasm app is not a flat n32 module. It is a guest compiled for
+`wasm32-unknown-unknown` (or `wasm32v1-none`) that imports the `i7host` interface from
+the `wasm-abi` crate. It gets no WASI, no kernel service table and no native pointer:
+every pointer is a 32-bit offset into the guest's linear memory.
+
+```rust
+#![no_std]
+
+use wasm_abi::{host_console_write, host_version, HOST_ABI_VERSION};
+
+#[no_mangle]
+pub extern "C" fn run() -> i32 {
+    if unsafe { host_version() } != HOST_ABI_VERSION {
+        return 1;
+    }
+    let message = b"hello from Wasm\n";
+    unsafe { host_console_write(message.as_ptr(), message.len() as u32) };
+    0
+}
+// A guest also needs a #[panic_handler]; see examples/wasm-hello.
+```
+
+[`examples/wasm-hello`](examples/wasm-hello) is a complete guest skeleton using
+`host_submit`, `host_poll` and the completion record:
+
+```bash
+cargo build --manifest-path examples/wasm-hello/Cargo.toml --release \
+  --target wasm32-unknown-unknown -Z build-std=core
+```
+
+The `.wasm` is embedded in a native host module (`include_bytes!`) that provides the
+imports; there is no SDK packager and no general Wasm app loader yet. The OS slot-B
+`modules/wasm` image is a policy/interpreter prototype whose current guest uses an
+earlier `i7host` draft, so a guest built against `wasm-abi` is not yet runnable there.
+[`docs/wasm-apps.md`](docs/wasm-apps.md) covers the full import surface, pointer rules,
+the completion ring and the current boundary honestly.
 
 ## Writing a user program
 
@@ -229,16 +318,20 @@ PIC flag, dynamic segment, interpreter, TLS segment, undefined symbol, entry out
 | `examples/hello/` | Example module (CI) |
 | `examples/ticker/` | Periodic callback example (CI) |
 | `examples/block/` | Block-service example with its own linker script (CI) |
+| `examples/wasm-hello/` | Wasm `i7host` guest skeleton (CI) |
 | `examples/user-hello/` | Console/args/environment/BSS user example (CI) |
 | `examples/user-probe/` | Filesystem and clock user probe (CI) |
-| `template/` | Copyable module crate |
+| `manifest/` | `irix7-module-manifest`: `I7MM` record and `I7MF` footer model |
+| `template/` | Copyable module crate with an optional `manifest.json` |
 | `templates/user/` | Copyable user crate |
-| `tools/irix7-module.py` | Build, flatten and hash a module |
+| `testdata/` | Cross-implementation manifest vectors from the OS encoder |
+| `tools/irix7-module.py` | Build, flatten, optionally manifest, and hash a module |
+| `tools/irix7_manifest.py` | `I7MM`/`I7MF` encoder, decoder and validation |
 | `tools/irix7-user.py` | Build, validate and pack a user image |
 | `tools/check-os-sync.py` | Compare the SDK target/ABI with an OS checkout |
 | `targets/` | `mips3-sgi-irix7-n32` and `mips3-sgi-irix7-native-n32` JSON |
 | `linker/` | Flat module linker and static user linker |
-| `docs/` | Module ABI, user ABI, userland boundary and quickstarts |
+| `docs/` | Module ABI, manifests, Wasm apps, userland and quickstarts |
 
 ## Licence
 

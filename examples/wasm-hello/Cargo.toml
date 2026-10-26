@@ -1,0 +1,24 @@
+[package]
+name = "wasm-hello-guest"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Minimal IRIX 7 Wasm guest for the i7host ABI"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+wasm-abi = { path = "../../wasm-abi" }
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+
+# This is a guest image, not an SDK workspace member. It links the SDK ABI
+# crate only through the `i7host` imports, so it has no native dependencies.
+[workspace]

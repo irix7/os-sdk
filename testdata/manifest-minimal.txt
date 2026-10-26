@@ -1,0 +1,19 @@
+# I7MM/I7MF version 1 minimal vector: no dependencies, no exports.
+#
+# The record_hex and wrapped_hex bytes below are the canonical output of
+# module_resolver::footer::wrap in irix7/os at 5a7696e. The ABI is the
+# current SDK service table, 1.11.
+#
+format=1
+name=hello-sdk
+version=0.3.0
+abi_major=1
+abi_minor=11
+dep_count=0
+export_count=0
+image_hex=0001020304050607
+record_hex=49374d4d010001000b00090068656c6c6f2d73646b0500302e332e3000000000
+record_len=32
+wrapped_hex=000102030405060749374d4d010001000b00090068656c6c6f2d73646b0500302e332e300000000049374d46010000000800000020000000
+wrapped_len=56
+wrapped_sha256=f8fa368d6bdfb5db33e54a0d502e9cc2e6bcf799dc9e8456d7de5cbc53cb7a48

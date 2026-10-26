@@ -19,13 +19,16 @@ jobs:
           rustfmt --edition 2021 --check \
             examples/user-hello/src/main.rs \
             examples/user-probe/src/main.rs \
+            examples/wasm-hello/src/lib.rs \
             templates/user/src/main.rs
       - name: Clippy (SDK libraries)
-        run: cargo clippy -p module-abi -p irix7-module-sdk -p irix7-user-abi -p irix7-user-sdk --all-targets -- -D warnings
+        run: cargo clippy -p module-abi -p irix7-module-sdk -p irix7-module-manifest -p irix7-user-abi -p irix7-user-sdk --all-targets -- -D warnings
       - name: Host tests
         run: |
+          cargo test -p irix7-module-manifest
           cargo test -p irix7-user-abi -p irix7-user-sdk
           python3 tools/tests/test_user_target.py
+          python3 tools/tests/test_module_manifest.py
       - name: Build the hello module
         run: python3 tools/irix7-module.py --package hello-sdk --output /tmp/hello-sdk.module --json > /tmp/hello-sdk.json
       - name: Check the hello JSON result
@@ -36,6 +39,36 @@ jobs:
           assert data['size'] > 0
           assert len(data['sha256']) == 64
           print('json ok:', data['size'], 'bytes')
+          PY
+      - name: Build the hello module with a manifest
+        run: |
+          python3 tools/irix7-module.py \
+            --package hello-sdk \
+            --manifest-json examples/hello/manifest.json \
+            --output /tmp/hello-manifest.module \
+            --json > /tmp/hello-manifest.json
+      - name: Check the manifest image and footer
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          sys.path.insert(0, 'tools')
+          import irix7_manifest
+
+          data = json.load(open('/tmp/hello-manifest.json'))
+          image = pathlib.Path('/tmp/hello-manifest.module').read_bytes()
+          manifest, payload = irix7_manifest.parse_wrapped(image)
+          assert manifest.name == 'hello-sdk', manifest.name
+          assert manifest.version == '0.3.0', manifest.version
+          assert data['sha256'] == hashlib.sha256(image).hexdigest()
+          assert data['size'] == len(image)
+          assert data['image_size'] == len(payload)
+          assert data['manifest_size'] == len(image) - len(payload) - irix7_manifest.FOOTER_LEN
+          assert payload and len(payload) < len(image)
+          print('manifest image ok:', manifest.name, manifest.version, data['size'], 'bytes')
           PY
       - name: Build the ticker module
         run: python3 tools/irix7-module.py --package ticker-sdk --output /tmp/ticker-sdk.module
@@ -61,6 +94,14 @@ jobs:
               assert 0 < len(data) <= 2 * 1024 * 1024, f'{name} image size out of range'
               print('flat image ok:', name, len(data), 'bytes')
           PY
+      - name: Build the Wasm guest example
+        run: |
+          cargo build --manifest-path examples/wasm-hello/Cargo.toml --release \
+            --target wasm32-unknown-unknown -Z build-std=core
+      - name: Check the Wasm guest imports and exports
+        run: |
+          IRIX7_WASM_GUEST=examples/wasm-hello/target/wasm32-unknown-unknown/release/wasm_hello_guest.wasm \
+            python3 tools/tests/test_wasm_guest.py
       - name: Build the user hello image
         run: python3 tools/irix7-user.py --package user-hello-sdk --output /tmp/user-hello.elf --image /tmp/user-hello.raw --json > /tmp/user-hello.json
       - name: Build the user probe image

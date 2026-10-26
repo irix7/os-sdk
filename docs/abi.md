@@ -1,7 +1,7 @@
 # Module ABI
 
 The SDK owns the `module-abi` crate in `abi/`; the IRIX 7 OS consumes it at the pinned SDK
-tag. The current ABI version is **10**.
+tag. The current ABI version is **11**.
 
 This document covers **kernel modules only**.  Static user images use the
 separate provisional userland ABI in [`user-abi.md`](user-abi.md); the two are
@@ -33,6 +33,9 @@ every module link the same crate, and compile-time assertions pin the n32 offset
 | 0x44 | `info` (status/net/mem/time) |
 | 0x48 | `screen_read` (BGR shadow) |
 | 0x4c | `block_read` (512-byte SCSI sector) |
+| 0x50 | `block_write` (512-byte SCSI sector) |
+
+ABI 10 added `block_read`; ABI 11 adds `block_write`.
 
 [`examples/block`](../examples/block) is the reference for `block_read`: it reads sector 0
 of target 1 and prints the volume-header magic. It checks the table version before the
@@ -53,3 +56,12 @@ struct ModuleVtable {
 
 The kernel calls `tick` from its idle loop at most every 10 ms. Return `0` to stay
 registered and non-zero to stop. The vtable must live inside the verified image.
+
+## Module manifests
+
+A flat image may append a version 1 `I7MM` manifest record and an `I7MF` footer; see
+[`module-manifest.md`](module-manifest.md). The record's `abi major` and `abi minor`
+are this service table's generation (`1`) and `ABI_VERSION` (`11`), not a second
+service-table version. A manifest is trailing data: it does not move `_start` from
+offset 0, the `Services` offsets and `ModuleVtable` are unchanged, and the kernel
+does not read it. **Do not bump `ABI_VERSION` for a manifest.**
