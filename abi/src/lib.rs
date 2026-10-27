@@ -21,7 +21,7 @@ pub const MODULE_BASE: usize = 0x8840_0000;
 pub const MODULE_MAX: usize = 0x0020_0000; // 2 MiB
 
 /// Service-table version understood by this ABI.
-pub const ABI_VERSION: u32 = 13;
+pub const ABI_VERSION: u32 = 14;
 
 /// Entry offset used by a legacy `_start(const Services *)` image.
 pub const MODULE_ENTRY_LEGACY: u32 = 0;
@@ -398,6 +398,13 @@ pub struct Services {
     /// module polls `tcp_state` for `2` (established) and applies its own
     /// connect deadline.
     pub tcp_connect: unsafe extern "C" fn(u32, u32, u16) -> i32,
+    /// Level-triggered readiness for module TCP slot `slot`.
+    ///
+    /// Bits: 0 RX, 1 TX (a previous send was short and space is available),
+    /// 2 CLOSED (reported once per connection), 3 LISTEN, 4 ESTABLISHED,
+    /// 31 no socket.  The kernel recomputes this from socket state; it is not
+    /// an edge queue and a lost notification cannot lose work.
+    pub tcp_events: extern "C" fn(u32) -> u32,
 }
 
 /// What a module returns from its entry point.
@@ -417,7 +424,7 @@ pub struct ModuleVtable {
 #[cfg(target_pointer_width = "32")]
 const _: () = {
     use core::mem::{offset_of, size_of};
-    assert!(size_of::<Services>() == 0x74);
+    assert!(size_of::<Services>() == 0x78);
     assert!(offset_of!(Services, version) == 0x00);
     assert!(offset_of!(Services, write) == 0x04);
     assert!(offset_of!(Services, clock_ms) == 0x08);
@@ -500,9 +507,10 @@ const _: () = {
     assert!(offset_of!(ModuleInfo, state) == 0x18);
     assert!(offset_of!(ModuleInfo, reserved) == 0x1c);
 
-    assert!(size_of::<Services>() == 0x74);
+    assert!(size_of::<Services>() == 0x78);
     assert!(offset_of!(Services, module_unload) == 0x6c);
     assert!(offset_of!(Services, tcp_connect) == 0x70);
+    assert!(offset_of!(Services, tcp_events) == 0x74);
 
     assert!(size_of::<ModuleVtable>() == 8);
     assert!(offset_of!(ModuleVtable, status) == 0);
@@ -515,8 +523,8 @@ mod tests {
     use core::mem::{offset_of, size_of};
 
     #[test]
-    fn abi_is_v13() {
-        assert_eq!(ABI_VERSION, 13);
+    fn abi_is_v14() {
+        assert_eq!(ABI_VERSION, 14);
     }
 
     #[test]
