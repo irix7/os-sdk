@@ -589,6 +589,15 @@ mod tests {
     unsafe extern "C" fn tcp_recv_stub(_: u32, _: *mut u8, _: usize) -> isize {
         -1
     }
+    unsafe extern "C" fn tcp_connect_stub(_: u32, _: u32, _: u16) -> i32 {
+        -1
+    }
+    extern "C" fn tcp_events_stub(_: u32) -> u32 {
+        1 << 31
+    }
+    extern "C" fn tcp_slots_stub() -> u32 {
+        2
+    }
     unsafe extern "C" fn tcp_send_stub(_: u32, _: *const u8, _: usize) -> isize {
         -1
     }
@@ -763,6 +772,9 @@ mod tests {
         module_find_export: find_export_stub,
         module_query: query_stub,
         module_unload: unload_stub,
+        tcp_connect: tcp_connect_stub,
+        tcp_events: tcp_events_stub,
+        tcp_slots: tcp_slots_stub,
     };
 
     fn context() -> Context {
