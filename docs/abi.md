@@ -1,7 +1,7 @@
 # Module ABI
 
 The SDK owns the `module-abi` crate in `abi/`; the IRIX 7 OS consumes it at the pinned SDK
-tag. The current ABI version is **12**.
+tag. The current ABI version is **13**.
 
 This document covers **kernel modules only**.  Static user images use the
 separate provisional userland ABI in [`user-abi.md`](user-abi.md); the two are
@@ -41,9 +41,10 @@ every module link the same crate, and compile-time assertions pin the n32 offset
 | 0x64 | `module_find_export` (exact interface and version) |
 | 0x68 | `module_query` (region, base, size and state of a handle) |
 | 0x6c | `module_unload` (release a region) |
+| 0x70 | `tcp_connect` (IPv4 network order + port) |
 
-ABI 10 added `block_read`; ABI 11 added `block_write`; ABI 12 adds the module-loader and
-arena services. `size_of::<Services>()` is `0x70` on n32.
+ABI 10 added `block_read`; ABI 11 added `block_write`; ABI 12 added the module-loader and
+arena services; ABI 13 adds `tcp_connect`. `size_of::<Services>()` is `0x74` on n32.
 
 [`examples/block`](../examples/block) is the reference for `block_read`: it reads sector 0
 of target 1 and prints the volume-header magic. It checks the table version before the

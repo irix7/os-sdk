@@ -21,7 +21,7 @@ pub const MODULE_BASE: usize = 0x8840_0000;
 pub const MODULE_MAX: usize = 0x0020_0000; // 2 MiB
 
 /// Service-table version understood by this ABI.
-pub const ABI_VERSION: u32 = 12;
+pub const ABI_VERSION: u32 = 13;
 
 /// Entry offset used by a legacy `_start(const Services *)` image.
 pub const MODULE_ENTRY_LEGACY: u32 = 0;
@@ -390,6 +390,14 @@ pub struct Services {
     /// Unload a handle and release its region.  The manager must ensure that
     /// no dependent still holds the handle or an export table.
     pub module_unload: unsafe extern "C" fn(ModuleHandle) -> i32,
+    /// Connect slot `slot` to IPv4 `address` (network byte order) and `port`.
+    ///
+    /// The slot is re-created with the same bounded RX/TX rings as
+    /// `tcp_listen`; a previous socket in the slot is aborted.  Returns 0 when
+    /// the SYN was queued, -1 on an invalid slot/address or no socket.  The
+    /// module polls `tcp_state` for `2` (established) and applies its own
+    /// connect deadline.
+    pub tcp_connect: unsafe extern "C" fn(u32, u32, u16) -> i32,
 }
 
 /// What a module returns from its entry point.
@@ -409,7 +417,7 @@ pub struct ModuleVtable {
 #[cfg(target_pointer_width = "32")]
 const _: () = {
     use core::mem::{offset_of, size_of};
-    assert!(size_of::<Services>() == 0x70);
+    assert!(size_of::<Services>() == 0x74);
     assert!(offset_of!(Services, version) == 0x00);
     assert!(offset_of!(Services, write) == 0x04);
     assert!(offset_of!(Services, clock_ms) == 0x08);
@@ -492,6 +500,10 @@ const _: () = {
     assert!(offset_of!(ModuleInfo, state) == 0x18);
     assert!(offset_of!(ModuleInfo, reserved) == 0x1c);
 
+    assert!(size_of::<Services>() == 0x74);
+    assert!(offset_of!(Services, module_unload) == 0x6c);
+    assert!(offset_of!(Services, tcp_connect) == 0x70);
+
     assert!(size_of::<ModuleVtable>() == 8);
     assert!(offset_of!(ModuleVtable, status) == 0);
     assert!(offset_of!(ModuleVtable, tick) == 4);
@@ -503,8 +515,8 @@ mod tests {
     use core::mem::{offset_of, size_of};
 
     #[test]
-    fn abi_is_v12() {
-        assert_eq!(ABI_VERSION, 12);
+    fn abi_is_v13() {
+        assert_eq!(ABI_VERSION, 13);
     }
 
     #[test]
