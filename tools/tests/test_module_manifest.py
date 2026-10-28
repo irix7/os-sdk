@@ -341,7 +341,7 @@ class FooterTest(unittest.TestCase):
 
 
 class ValidationTest(unittest.TestCase):
-    def validate(self, manifest, sdk_abi=(1, 12)):
+    def validate(self, manifest, sdk_abi=SDK_ABI):
         codec.validate_manifest(manifest, sdk_abi)
 
     def test_accepts_a_valid_manifest(self):
