@@ -11,6 +11,11 @@
 //! the fetch/SHA-256/copy path, cache maintenance and the loaded-module table;
 //! it does **not** own dependency resolution, manifests, signatures, package
 //! indexes or policy.  See `docs/module-loader.md` in the SDK.
+//!
+//! ABI 16 appends the UDP services a datagram transport needs: open, send,
+//! receive, close, slot count and the bound local address.  The kernel owns
+//! the socket and the interface queue; a module owns congestion control,
+//! framing and retransmission policy above it.
 
 #![no_std]
 
@@ -21,7 +26,7 @@ pub const MODULE_BASE: usize = 0x8840_0000;
 pub const MODULE_MAX: usize = 0x0020_0000; // 2 MiB
 
 /// Service-table version understood by this ABI.
-pub const ABI_VERSION: u32 = 15;
+pub const ABI_VERSION: u32 = 16;
 
 /// Entry offset used by a legacy `_start(const Services *)` image.
 pub const MODULE_ENTRY_LEGACY: u32 = 0;
@@ -415,6 +420,39 @@ pub struct Services {
     /// compile-time constant in the module: a module that needs several peer
     /// links asks first and degrades or refuses rather than assuming two.
     pub tcp_slots: extern "C" fn() -> u32,
+    /// Open a UDP socket in `slot`, bound to local `port`.
+    ///
+    /// `port` must be nonzero.  Each slot owns one socket and its own bounded
+    /// RX/TX buffers, and a slot that already owns a socket is closed first.
+    /// Returns 0, or -1 for an invalid slot or port zero.
+    pub udp_open: unsafe extern "C" fn(u32, u16) -> i32,
+    /// Send one datagram to IPv4 `address` (network byte order) and `port`.
+    ///
+    /// Returns `len` when the datagram was queued, 0 when the socket buffer is
+    /// full (retry after the next [`Services::poll`]), and -1 for no socket or
+    /// an invalid argument.  The kernel does not split a datagram.
+    pub udp_send: unsafe extern "C" fn(u32, u32, u16, *const u8, usize) -> isize,
+    /// Receive one datagram into `ptr`.
+    ///
+    /// Returns the payload length, 0 when nothing is queued, -1 for no socket
+    /// or an invalid argument, and -2 when a datagram did not fit `len` and
+    /// was dropped; the caller's buffer must be at least one path MTU.  When
+    /// `src_address` (network byte order) and `src_port` are non-null they
+    /// receive the sender of the datagram that was dequeued.
+    pub udp_recv: unsafe extern "C" fn(u32, *mut u8, usize, *mut u32, *mut u16) -> isize,
+    /// Close the UDP socket in `slot`.  A slot with no socket is ignored.
+    pub udp_close: extern "C" fn(u32),
+    /// Number of module UDP slots the kernel provides.
+    ///
+    /// The count is kernel policy, not an ABI constant: a module asks first
+    /// and degrades or refuses rather than assuming a fixed number.
+    pub udp_slots: extern "C" fn() -> u32,
+    /// Local address and port bound to `slot`.
+    ///
+    /// Writes the local IPv4 address (network byte order) and port when the
+    /// non-null out-parameters are supplied.  Returns 0, or -1 for a slot with
+    /// no socket.
+    pub udp_state: unsafe extern "C" fn(u32, *mut u32, *mut u16) -> i32,
 }
 
 /// What a module returns from its entry point.
@@ -434,7 +472,7 @@ pub struct ModuleVtable {
 #[cfg(target_pointer_width = "32")]
 const _: () = {
     use core::mem::{offset_of, size_of};
-    assert!(size_of::<Services>() == 0x7c);
+    assert!(size_of::<Services>() == 0x94);
     assert!(offset_of!(Services, version) == 0x00);
     assert!(offset_of!(Services, write) == 0x04);
     assert!(offset_of!(Services, clock_ms) == 0x08);
@@ -466,6 +504,12 @@ const _: () = {
     assert!(offset_of!(Services, tcp_connect) == 0x70);
     assert!(offset_of!(Services, tcp_events) == 0x74);
     assert!(offset_of!(Services, tcp_slots) == 0x78);
+    assert!(offset_of!(Services, udp_open) == 0x7c);
+    assert!(offset_of!(Services, udp_send) == 0x80);
+    assert!(offset_of!(Services, udp_recv) == 0x84);
+    assert!(offset_of!(Services, udp_close) == 0x88);
+    assert!(offset_of!(Services, udp_slots) == 0x8c);
+    assert!(offset_of!(Services, udp_state) == 0x90);
 
     assert!(size_of::<ModuleArena>() == 0x20);
     assert!(offset_of!(ModuleArena, base) == 0x00);
@@ -520,11 +564,17 @@ const _: () = {
     assert!(offset_of!(ModuleInfo, state) == 0x18);
     assert!(offset_of!(ModuleInfo, reserved) == 0x1c);
 
-    assert!(size_of::<Services>() == 0x7c);
+    assert!(size_of::<Services>() == 0x94);
     assert!(offset_of!(Services, module_unload) == 0x6c);
     assert!(offset_of!(Services, tcp_connect) == 0x70);
     assert!(offset_of!(Services, tcp_events) == 0x74);
     assert!(offset_of!(Services, tcp_slots) == 0x78);
+    assert!(offset_of!(Services, udp_open) == 0x7c);
+    assert!(offset_of!(Services, udp_send) == 0x80);
+    assert!(offset_of!(Services, udp_recv) == 0x84);
+    assert!(offset_of!(Services, udp_close) == 0x88);
+    assert!(offset_of!(Services, udp_slots) == 0x8c);
+    assert!(offset_of!(Services, udp_state) == 0x90);
 
     assert!(size_of::<ModuleVtable>() == 8);
     assert!(offset_of!(ModuleVtable, status) == 0);
@@ -537,8 +587,8 @@ mod tests {
     use core::mem::{offset_of, size_of};
 
     #[test]
-    fn abi_is_v15() {
-        assert_eq!(ABI_VERSION, 15);
+    fn abi_is_v16() {
+        assert_eq!(ABI_VERSION, 16);
     }
 
     #[test]

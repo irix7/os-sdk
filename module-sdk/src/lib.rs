@@ -208,6 +208,58 @@ impl Context {
         (self.services.tcp_abort)(slot);
     }
 
+    /// Open UDP slot `slot` bound to local `port` (nonzero).
+    pub fn udp_open(&self, slot: u32, port: u16) -> bool {
+        unsafe { (self.services.udp_open)(slot, port) == 0 }
+    }
+
+    /// Send one datagram to `address` (network byte order) and `port`.
+    ///
+    /// Returns the length queued, 0 when the socket buffer is full, or a
+    /// negative error.
+    pub fn udp_send(&self, slot: u32, address: u32, port: u16, data: &[u8]) -> isize {
+        unsafe { (self.services.udp_send)(slot, address, port, data.as_ptr(), data.len()) }
+    }
+
+    /// Receive one datagram, returning the payload length and the sender.
+    ///
+    /// A zero length means nothing was queued.  A datagram longer than `out`
+    /// is truncated and the excess discarded.
+    pub fn udp_recv(&self, slot: u32, out: &mut [u8]) -> (isize, Option<(u32, u16)>) {
+        let mut address = 0u32;
+        let mut port = 0u16;
+        let n = unsafe {
+            (self.services.udp_recv)(slot, out.as_mut_ptr(), out.len(), &mut address, &mut port)
+        };
+        if n < 0 {
+            (n, None)
+        } else {
+            (n, Some((address, port)))
+        }
+    }
+
+    /// Close the UDP socket in `slot`.
+    pub fn udp_close(&self, slot: u32) {
+        (self.services.udp_close)(slot);
+    }
+
+    /// Number of UDP slots the kernel provides.
+    pub fn udp_slots(&self) -> u32 {
+        (self.services.udp_slots)()
+    }
+
+    /// Local address (network byte order) and port bound to `slot`.
+    pub fn udp_state(&self, slot: u32) -> Option<(u32, u16)> {
+        let mut address = 0u32;
+        let mut port = 0u16;
+        let status = unsafe { (self.services.udp_state)(slot, &mut address, &mut port) };
+        if status == 0 {
+            Some((address, port))
+        } else {
+            None
+        }
+    }
+
     /// Read a PROM environment value by name.
     pub fn config_get<'a>(&self, name: &str, out: &'a mut [u8]) -> Option<&'a [u8]> {
         let n = unsafe {
@@ -601,6 +653,27 @@ mod tests {
     unsafe extern "C" fn tcp_send_stub(_: u32, _: *const u8, _: usize) -> isize {
         -1
     }
+    unsafe extern "C" fn udp_open_stub(_: u32, _: u16) -> i32 {
+        -1
+    }
+    unsafe extern "C" fn udp_send_stub(_: u32, _: u32, _: u16, _: *const u8, _: usize) -> isize {
+        -1
+    }
+    unsafe extern "C" fn udp_recv_stub(
+        _: u32,
+        _: *mut u8,
+        _: usize,
+        _: *mut u32,
+        _: *mut u16,
+    ) -> isize {
+        -1
+    }
+    unsafe extern "C" fn udp_state_stub(_: u32, _: *mut u32, _: *mut u16) -> i32 {
+        -1
+    }
+    extern "C" fn udp_slots_stub() -> u32 {
+        0
+    }
     unsafe extern "C" fn console_read_stub(_: u64, _: *mut u8, _: usize) -> isize {
         -1
     }
@@ -775,6 +848,12 @@ mod tests {
         tcp_connect: tcp_connect_stub,
         tcp_events: tcp_events_stub,
         tcp_slots: tcp_slots_stub,
+        udp_open: udp_open_stub,
+        udp_send: udp_send_stub,
+        udp_recv: udp_recv_stub,
+        udp_close: noop_u32,
+        udp_slots: udp_slots_stub,
+        udp_state: udp_state_stub,
     };
 
     fn context() -> Context {
